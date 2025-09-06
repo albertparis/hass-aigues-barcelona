@@ -286,7 +286,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
         }
         _LOGGER.debug(f"Adding metric: {metadata} {stats}")
-        async_import_statistics(self.hass, metadata, stats)
+        await async_import_statistics(self.hass, metadata, stats)
 
     async def clear_all_stored_data(self) -> None:
         await self._clear_statistics()
