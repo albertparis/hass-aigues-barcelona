@@ -23,7 +23,6 @@ from homeassistant.components.sensor import SensorEntity
 from homeassistant.components.sensor import SensorStateClass
 from homeassistant.const import CONF_PASSWORD
 from homeassistant.const import CONF_STATE
-from homeassistant.const import CONF_TOKEN
 from homeassistant.const import CONF_USERNAME
 from homeassistant.const import EVENT_HOMEASSISTANT_START
 from homeassistant.const import UnitOfVolume
@@ -33,6 +32,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.update_coordinator import TimestampDataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .api import AiguesApiClient
 from .const import API_ERROR_TOKEN_REVOKED
@@ -41,6 +41,7 @@ from .const import CONF_CONTRACT
 from .const import CONF_VALUE
 from .const import DEFAULT_SCAN_PERIOD
 from .const import DOMAIN
+from .const import CONF_2CAPTCHA_APIKEY
 
 from typing import Optional
 
@@ -63,13 +64,14 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
 
     username = config_entry.data[CONF_USERNAME]
     password = config_entry.data[CONF_PASSWORD]
+    twocaptcha_api_key = config_entry.data[CONF_2CAPTCHA_APIKEY]
     contracts = config_entry.data[CONF_CONTRACT]
-    token = config_entry.data.get(CONF_TOKEN)
+    token = config_entry.data.get("token")
 
     contadores = list()
 
     for contract in contracts:
-        coordinator = ContratoAgua(hass, username, password, contract, token=token)
+        coordinator = ContratoAgua(hass, username, password, twocaptcha_api_key, contract, token=token, entry_id=config_entry.entry_id)
         contadores.append(ContadorAgua(coordinator))
 
     # postpone first refresh to speed up startup
@@ -97,8 +99,10 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         hass: HomeAssistant,
         username: str,
         password: str,
+        twocaptcha_api_key: str,
         contract: str,
-        token: str = None,
+        token: str,
+        entry_id: str,
         prev_data=None,
     ) -> None:
         """Initialize the data handler."""
@@ -107,6 +111,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         self.contract = contract.upper()
         self.id = contract.lower()
         self.internal_sensor_id = f"sensor.contador_{self.id}"
+        self.entry_id = entry_id
 
         if not hass.data[DOMAIN].get(self.contract):
             # init data shared store
@@ -119,7 +124,8 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         hass.data[DOMAIN][self.contract]["coordinator"] = self
 
         # the api object
-        self._api = AiguesApiClient(username, password, contract)
+        self._api = AiguesApiClient(username, password, twocaptcha_api_key, contract)
+
         if token:
             self._api.set_token(token)
 
@@ -151,18 +157,30 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         except ValueError:
             previous = None
 
-        if previous and (TODAY - previous) <= timedelta(minutes=60):
+        if previous and (TODAY - previous) <= timedelta(minutes=10):
             _LOGGER.warning("Skipping request update data - too early")
             return
 
         consumptions = None
         try:
             if self._api.is_token_expired():
-                raise ConfigEntryAuthFailed
-            # TODO: change once recaptcha is fiexd
-            # await self.hass.async_add_executor_job(self._api.login)
+                entry = self.hass.config_entries.async_get_entry(self.entry_id)
+
+                self.hass.config_entries.async_update_entry(
+                    entry,
+                    data={k: v for k, v in entry.data.items() if k != "token"}
+                )
+
+                await self.hass.async_add_executor_job(self._api.login)
+                new_token = self._api.get_token()
+
+                if new_token:
+                    self.hass.config_entries.async_update_entry(
+                        entry,
+                        data={**entry.data, "token": new_token}
+                    )
             consumptions = await self.hass.async_add_executor_job(
-                self._api.consumptions, LAST_WEEK, TODAY, self.contract
+                self._api.consumptions, LAST_WEEK, TODAY + timedelta(days=1), self.contract
             )
         except ConfigEntryAuthFailed as exp:
             _LOGGER.error("Token has expired, cannot check consumptions.")
@@ -186,8 +204,8 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         # await self._clear_statistics()
         try:
             await self._async_import_statistics(consumptions)
-        except:
-            pass
+        except Exception:
+            _LOGGER.exception("Failed to import statistics")
 
         if LAST_TIME_DAYS and LAST_TIME_DAYS >= 7:
             await self.import_old_consumptions(days=LAST_TIME_DAYS)
@@ -234,13 +252,18 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
     async def _async_import_statistics(self, consumptions) -> None:
         # force sort by datetime
         consumptions = sorted(
-            consumptions, key=lambda x: datetime.fromisoformat(x["datetime"])
+            consumptions,
+            key=lambda x: (
+                dt_util.as_utc(dt_util.parse_datetime(x["datetime"]))
+                if dt_util.parse_datetime(x["datetime"]) is not None
+                else datetime.min
+            ),
         )
 
         stats = list()
         for metric in consumptions:
-            start_ts = datetime.fromisoformat(metric["datetime"])
-            start_ts = start_ts.replace(minute=0, second=0, microsecond=0)  # required
+            start_ts = dt_util.parse_datetime(metric["datetime"])
+            start_ts = dt_util.as_utc(start_ts).replace(minute=0, second=0, microsecond=0)
 
             # round: fixes decimal with 20 digits precision
             state = round(metric["accumulatedConsumption"], 4)
@@ -257,12 +280,12 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         metadata = {
             "has_mean": False,
             "has_sum": True,
-            "name": None,
+            "name": f"Contador {self.id}",
             "source": "recorder",  # required
             "statistic_id": self.internal_sensor_id,
             "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
         }
-        # _LOGGER.debug(f"Adding metric: {metadata} {stats}")
+        _LOGGER.debug(f"Adding metric: {metadata} {stats}")
         async_import_statistics(self.hass, metadata, stats)
 
     async def clear_all_stored_data(self) -> None:
@@ -273,7 +296,21 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         one_year_ago = today - timedelta(days=days)
 
         if self._api.is_token_expired():
-            raise ConfigEntryAuthFailed
+            entry = self.hass.config_entries.async_get_entry(self.entry_id)
+
+            self.hass.config_entries.async_update_entry(
+                entry,
+                data={k: v for k, v in entry.data.items() if k != "token"}
+            )
+
+            await self.hass.async_add_executor_job(self._api.login)
+            new_token = self._api.get_token()
+
+            if new_token:
+                self.hass.config_entries.async_update_entry(
+                    entry,
+                    data={**entry.data, "token": new_token}
+                )
 
         current_date = one_year_ago
         while current_date < today:
@@ -301,7 +338,7 @@ class ContadorAgua(CoordinatorEntity, SensorEntity):
         self._attr_has_entity_name = True
         self._attr_should_poll = False
         self._attr_device_class = SensorDeviceClass.WATER
-        self._attr_state_class = SensorStateClass.TOTAL
+        self._attr_state_class = SensorStateClass.TOTAL_INCREASING
         self._attr_native_unit_of_measurement = UnitOfVolume.CUBIC_METERS
 
     @property

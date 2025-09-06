@@ -7,16 +7,24 @@ import requests
 
 from .const import API_COOKIE_TOKEN
 from .const import API_HOST
+from .const import RECAPTCHA_V2_PAGEURL
+from .const import RECAPTCHA_V2_SITEKEY
 from .version import VERSION
+
+from typing import TypedDict
+from twocaptcha import TwoCaptcha, api
 
 TIMEOUT = 60
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 
+class ChallengeResponse(TypedDict):
+    captchaId: str
+    code: str
 
 class AiguesApiClient:
     def __init__(
-        self, username, password, contract=None, session: requests.Session = None
+        self, username, password, twocaptcha_api_key, contract=None, session: requests.Session = None
     ):
         if session is None:
             session = requests.Session()
@@ -32,6 +40,7 @@ class AiguesApiClient:
         }
         self._username = username
         self._password = password
+        self._twocaptcha_api_key = twocaptcha_api_key
         self._contract = contract
         self.last_response = None
 
@@ -40,6 +49,9 @@ class AiguesApiClient:
         if query:
             query_proc = "?" + "&".join([f"{k}={v}" for k, v in query.items()])
         return f"{self.api_host}/{path.lstrip('/')}{query_proc}"
+
+    def get_token(self):
+        return self.cli.cookies.get_dict().get(API_COOKIE_TOKEN)
 
     def _return_token_field(self, key):
         token = self.cli.cookies.get_dict().get(API_COOKIE_TOKEN)
@@ -66,7 +78,9 @@ class AiguesApiClient:
             headers=headers,
             timeout=TIMEOUT,
         )
-        _LOGGER.debug(f"Query done with code {resp.status_code}")
+        _LOGGER.debug(f"Query done with code {resp.status_code} {resp.json()}")
+        _LOGGER.debug(f"{resp.text}")
+
         msg = resp.text
         self.last_response = resp.text
         if len(msg) > 5 and (msg.startswith("{") or msg.startswith("[")):
@@ -89,12 +103,30 @@ class AiguesApiClient:
 
         return resp
 
-    def login(self, user=None, password=None, recaptcha=None):
+    def login(self, user=None, password=None):
+        try:
+            client = TwoCaptcha(self._twocaptcha_api_key)
+
+            response: ChallengeResponse = client.recaptcha(sitekey=RECAPTCHA_V2_SITEKEY, url=RECAPTCHA_V2_PAGEURL)
+
+            if not response or "code" not in response:
+                raise RuntimeError(f"2Captcha no code in response: {response}")
+
+            recaptcha = response["code"]
+        except api.NetworkException as e:
+            _LOGGER.error("2Captcha network error: %s", e)
+            raise
+        except api.ApiException as e:
+            _LOGGER.error("2Captcha API error: %s", e)
+            raise
+        except Exception as e:
+            _LOGGER.error("Unexpected 2Captcha error: %s", e)
+            raise
+
         if user is None:
             user = self._username
         if password is None:
             password = self._password
-        # recaptcha seems to not be validated?
         if recaptcha is None:
             recaptcha = ""
 
@@ -124,6 +156,8 @@ class AiguesApiClient:
             _LOGGER.warning("Access token missing")
             return False
 
+        self.set_token(access_token)
+
         return True
 
         # set as cookie: ofexTokenJwt
@@ -140,6 +174,7 @@ class AiguesApiClient:
             "rest": {"HttpOnly": True, "SameSite": "None"},
         }
         cookie = requests.cookies.create_cookie(**cookie_data)
+        _LOGGER.debug(f"set_token call with {token}")
         return self.cli.cookies.set_cookie(cookie)
 
     def is_token_expired(self) -> bool:
@@ -151,6 +186,7 @@ class AiguesApiClient:
         expires = datetime.datetime.fromtimestamp(expires)
         NOW = datetime.datetime.now()
 
+        _LOGGER.debug(f"is_token_expired call with result {NOW >= expires}")
         return NOW >= expires
 
     def profile(self, user=None):
@@ -163,12 +199,14 @@ class AiguesApiClient:
             "Ocp-Apim-Subscription-Key": "6a98b8b8c7b243cda682a43f09e6588b;product=portlet-login-ofex"
         }
 
-        r = self._query(path, query, headers=headers, method="POST")
+        r = self._query(path, query, json=None, headers=headers, method="POST")
 
         assert r.json().get("user_data"), "User data missing"
         return r.json()
 
-    def contracts(self, user=None, status=["ASSIGNED", "PENDING"]):
+    def contracts(self, user=None, status=None):
+        if status is None:
+            status = ["ASSIGNED", "PENDING"]
         if user is None:
             user = self._return_token_field("name")
         if isinstance(status, str):

@@ -3,42 +3,45 @@
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.config_entries import SOURCE_REAUTH
 from homeassistant.const import CONF_PASSWORD
-from homeassistant.const import CONF_TOKEN
 from homeassistant.const import CONF_USERNAME
+from homeassistant.const import CONF_TOKEN
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .api import AiguesApiClient
 from .const import DOMAIN
+from .const import CONF_2CAPTCHA_APIKEY
 from .service import async_setup as setup_service
 
-# from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady
 
 PLATFORMS = [Platform.SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    api = AiguesApiClient(entry.data[CONF_USERNAME], entry.data[CONF_PASSWORD], entry.data.get(CONF_2CAPTCHA_APIKEY, ""))
 
-    # TODO Change after fixing Recaptcha.
-    api = AiguesApiClient(entry.data[CONF_USERNAME], entry.data[CONF_PASSWORD])
-    api.set_token(entry.data.get(CONF_TOKEN))
+    if token := entry.data.get(CONF_TOKEN):
+        api.set_token(token)
 
     if api.is_token_expired():
-        await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": SOURCE_REAUTH},
-            data=entry,
-        )
-        return False
-        raise ConfigEntryAuthFailed
+        try:
+            hass.config_entries.async_update_entry(
+                entry,
+                data={k: v for k, v in entry.data.items() if k != "token"}
+            )
 
-    # try:
-    #    await hass.async_add_executor_job(api.login)
-    # except:
-    #    raise ConfigEntryNotReady
+            await hass.async_add_executor_job(api.login)
+            new_token = api.get_token()
+
+            if new_token:
+                hass.config_entries.async_update_entry(
+                    entry,
+                    data={**entry.data, "token": new_token}
+                )
+        except:
+            raise ConfigEntryNotReady
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

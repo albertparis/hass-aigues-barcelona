@@ -162,3 +162,5 @@ cython_debug/
 # Home Assistant / Testing
 
 config/
+
+.idea
