@@ -13,6 +13,8 @@
   "integration_type": "hub",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/duhow/hass-aigues-barcelona/issues",
-  "requirements": ["2captcha-python"],
+  "requirements": [
+    "2captcha-python"
+  ],
   "version": "0.5.0"
 }

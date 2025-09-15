@@ -71,7 +71,15 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
     contadores = list()
 
     for contract in contracts:
-        coordinator = ContratoAgua(hass, username, password, twocaptcha_api_key, contract, token=token, entry_id=config_entry.entry_id)
+        coordinator = ContratoAgua(
+            hass,
+            username,
+            password,
+            twocaptcha_api_key,
+            contract,
+            token=token,
+            entry_id=config_entry.entry_id,
+        )
         contadores.append(ContadorAgua(coordinator))
 
     # postpone first refresh to speed up startup
@@ -167,8 +175,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 entry = self.hass.config_entries.async_get_entry(self.entry_id)
 
                 self.hass.config_entries.async_update_entry(
-                    entry,
-                    data={k: v for k, v in entry.data.items() if k != "token"}
+                    entry, data={k: v for k, v in entry.data.items() if k != "token"}
                 )
 
                 await self.hass.async_add_executor_job(self._api.login)
@@ -176,11 +183,13 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
                 if new_token:
                     self.hass.config_entries.async_update_entry(
-                        entry,
-                        data={**entry.data, "token": new_token}
+                        entry, data={**entry.data, "token": new_token}
                     )
             consumptions = await self.hass.async_add_executor_job(
-                self._api.consumptions, LAST_WEEK, TODAY + timedelta(days=1), self.contract
+                self._api.consumptions,
+                LAST_WEEK,
+                TODAY + timedelta(days=1),
+                self.contract,
             )
         except ConfigEntryAuthFailed as exp:
             _LOGGER.error("Token has expired, cannot check consumptions.")
@@ -263,7 +272,9 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         stats = list()
         for metric in consumptions:
             start_ts = dt_util.parse_datetime(metric["datetime"])
-            start_ts = dt_util.as_utc(start_ts).replace(minute=0, second=0, microsecond=0)
+            start_ts = dt_util.as_utc(start_ts).replace(
+                minute=0, second=0, microsecond=0
+            )
 
             # round: fixes decimal with 20 digits precision
             state = round(metric["accumulatedConsumption"], 4)
@@ -299,8 +310,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             entry = self.hass.config_entries.async_get_entry(self.entry_id)
 
             self.hass.config_entries.async_update_entry(
-                entry,
-                data={k: v for k, v in entry.data.items() if k != "token"}
+                entry, data={k: v for k, v in entry.data.items() if k != "token"}
             )
 
             await self.hass.async_add_executor_job(self._api.login)
@@ -308,8 +318,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
             if new_token:
                 self.hass.config_entries.async_update_entry(
-                    entry,
-                    data={**entry.data, "token": new_token}
+                    entry, data={**entry.data, "token": new_token}
                 )
 
         current_date = one_year_ago

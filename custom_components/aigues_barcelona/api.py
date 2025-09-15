@@ -18,13 +18,20 @@ TIMEOUT = 60
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 
+
 class ChallengeResponse(TypedDict):
     captchaId: str
     code: str
 
+
 class AiguesApiClient:
     def __init__(
-        self, username, password, twocaptcha_api_key, contract=None, session: requests.Session = None
+        self,
+        username,
+        password,
+        twocaptcha_api_key,
+        contract=None,
+        session: requests.Session = None,
     ):
         if session is None:
             session = requests.Session()
@@ -107,7 +114,9 @@ class AiguesApiClient:
         try:
             client = TwoCaptcha(self._twocaptcha_api_key)
 
-            response: ChallengeResponse = client.recaptcha(sitekey=RECAPTCHA_V2_SITEKEY, url=RECAPTCHA_V2_PAGEURL)
+            response: ChallengeResponse = client.recaptcha(
+                sitekey=RECAPTCHA_V2_SITEKEY, url=RECAPTCHA_V2_PAGEURL
+            )
 
             if not response or "code" not in response:
                 raise RuntimeError(f"2Captcha no code in response: {response}")

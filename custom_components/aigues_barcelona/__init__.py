@@ -20,7 +20,11 @@ PLATFORMS = [Platform.SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    api = AiguesApiClient(entry.data[CONF_USERNAME], entry.data[CONF_PASSWORD], entry.data.get(CONF_2CAPTCHA_APIKEY, ""))
+    api = AiguesApiClient(
+        entry.data[CONF_USERNAME],
+        entry.data[CONF_PASSWORD],
+        entry.data.get(CONF_2CAPTCHA_APIKEY, ""),
+    )
 
     if token := entry.data.get(CONF_TOKEN):
         api.set_token(token)
@@ -28,8 +32,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if api.is_token_expired():
         try:
             hass.config_entries.async_update_entry(
-                entry,
-                data={k: v for k, v in entry.data.items() if k != "token"}
+                entry, data={k: v for k, v in entry.data.items() if k != "token"}
             )
 
             await hass.async_add_executor_job(api.login)
@@ -37,8 +40,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             if new_token:
                 hass.config_entries.async_update_entry(
-                    entry,
-                    data={**entry.data, "token": new_token}
+                    entry, data={**entry.data, "token": new_token}
                 )
         except:
             raise ConfigEntryNotReady

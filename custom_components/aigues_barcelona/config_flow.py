@@ -143,7 +143,9 @@ class AiguesBarcelonaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.error("Reauth failed, contract does not match stored one")
                 raise InvalidAuth
 
-            self.hass.config_entries.async_update_entry(self.entry, data={**user_input, **info})
+            self.hass.config_entries.async_update_entry(
+                self.entry, data={**user_input, **info}
+            )
             self.hass.async_create_task(
                 self.hass.config_entries.async_reload(self.entry.entry_id)
             )
