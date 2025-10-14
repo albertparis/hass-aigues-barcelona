@@ -347,7 +347,7 @@ class ContadorAgua(CoordinatorEntity, SensorEntity):
         self._attr_has_entity_name = True
         self._attr_should_poll = False
         self._attr_device_class = SensorDeviceClass.WATER
-        self._attr_state_class = SensorStateClass.TOTAL_INCREASING
+        self._attr_state_class = SensorStateClass.TOTAL
         self._attr_native_unit_of_measurement = UnitOfVolume.CUBIC_METERS
 
     @property
