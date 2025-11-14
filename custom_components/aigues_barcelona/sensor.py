@@ -116,6 +116,8 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         """Initialize the data handler."""
         self.reset = prev_data is None
 
+        self._import_in_progress = False
+
         self.contract = contract.upper()
         self.id = contract.lower()
         self.internal_sensor_id = f"sensor.contador_{self.id}"
@@ -127,6 +129,10 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
         # create alias
         self._data = hass.data[DOMAIN][self.contract]
+
+        self._data.setdefault("neg_regress_count", 0)
+        self._data.setdefault("neg_regress_last_ts", None)
+        self._data.setdefault("last_imported_sum", None)
 
         # WARN define a pointer to this object
         hass.data[DOMAIN][self.contract]["coordinator"] = self
@@ -146,6 +152,26 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
     def __repr__(self):
         return f"<{self.__class__.__name__} {self.contract}>"
+
+    async def _ensure_token(self) -> None:
+        """Ensure API token is valid; refresh and persist it if expired."""
+        if not self._api.is_token_expired():
+            return
+
+        entry = self.hass.config_entries.async_get_entry(self.entry_id)
+
+        # drop old token to force login
+        self.hass.config_entries.async_update_entry(
+            entry, data={k: v for k, v in entry.data.items() if k != "token"}
+        )
+
+        await self.hass.async_add_executor_job(self._api.login)
+        new_token = self._api.get_token()
+
+        if new_token:
+            self.hass.config_entries.async_update_entry(
+                entry, data={**entry.data, "token": new_token}
+            )
 
     async def _async_update_data(self):
         _LOGGER.info(f"Updating coordinator data for {self.contract}")
@@ -171,25 +197,10 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
         consumptions = None
         try:
-            if self._api.is_token_expired():
-                entry = self.hass.config_entries.async_get_entry(self.entry_id)
+            await self._ensure_token()
 
-                self.hass.config_entries.async_update_entry(
-                    entry, data={k: v for k, v in entry.data.items() if k != "token"}
-                )
-
-                await self.hass.async_add_executor_job(self._api.login)
-                new_token = self._api.get_token()
-
-                if new_token:
-                    self.hass.config_entries.async_update_entry(
-                        entry, data={**entry.data, "token": new_token}
-                    )
             consumptions = await self.hass.async_add_executor_job(
-                self._api.consumptions,
-                LAST_WEEK,
-                TODAY + timedelta(days=1),
-                self.contract,
+                self._api.consumptions, LAST_WEEK, TODAY + timedelta(days=1), self.contract
             )
         except ConfigEntryAuthFailed as exp:
             _LOGGER.error("Token has expired, cannot check consumptions.")
@@ -210,11 +221,34 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         self._data[CONF_VALUE] = metric["accumulatedConsumption"]
         self._data[CONF_STATE] = metric["datetime"]
 
+        # Lightweight initialize last_imported_sum after restart if missing
+        if self._data.get("last_imported_sum") is None:
+            try:
+                # dedupe per hour and take the last (max per hour already handled in importer,
+                # here we just pick last valid accumulatedConsumption from consumptions)
+                vals = [
+                    round(m["accumulatedConsumption"], 4)
+                    for m in consumptions
+                    if m.get("accumulatedConsumption") is not None
+                ]
+                if vals:
+                    self._data["last_imported_sum"] = vals[-1]
+                    _LOGGER.info(
+                        "Initialized last_imported_sum=%s for %s from recent API",
+                        self._data["last_imported_sum"],
+                        self.contract,
+                    )
+            except Exception:
+                _LOGGER.debug(
+                    "Failed to initialize last_imported_sum from API for %s", self.contract
+                )
+
         # await self._clear_statistics()
         try:
             await self._async_import_statistics(consumptions)
         except Exception:
             _LOGGER.exception("Failed to import statistics")
+
 
         if LAST_TIME_DAYS and LAST_TIME_DAYS >= 7:
             await self.import_old_consumptions(days=LAST_TIME_DAYS)
@@ -232,7 +266,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         ]
 
         if to_clear:
-            _LOGGER.warn(
+            _LOGGER.warning(
                 f"About to delete {len(to_clear)} entries from {self.contract}"
             )
             # NOTE: This does not seem to work?
@@ -241,63 +275,148 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             )
 
     async def get_last_measurement_stored(self) -> Optional[datetime]:
-        last_stored = None
-
-        all_ids = await get_db_instance(self.hass).async_add_executor_job(
-            list_statistic_ids, self.hass
-        )
-
-        for stat_id in all_ids:
-            if stat_id["statistic_id"] == self.internal_sensor_id:
-                if stat_id.get("sum") and stat_id["sum"] > last_stored["sum"]:
-                    last_stored = stat_id
-
-        if last_stored:
-            _LOGGER.debug(f"Found last stored value: {last_stored}")
-            return datetime.fromtimestamp(last_stored.get("start_ts"))
-
+        """Placeholder — not used. Implement DB query later if needed."""
         return None
 
+        # last_stored = None
+        #
+        # all_ids = await get_db_instance(self.hass).async_add_executor_job(
+        #     list_statistic_ids, self.hass
+        # )
+        #
+        # for stat_id in all_ids:
+        #     if stat_id["statistic_id"] == self.internal_sensor_id:
+        #         if stat_id.get("sum") and stat_id["sum"] > last_stored["sum"]:
+        #             last_stored = stat_id
+        #
+        # if last_stored:
+        #     _LOGGER.debug(f"Found last stored value: {last_stored}")
+        #     return datetime.fromtimestamp(last_stored.get("start_ts"))
+        #
+        # return None
+
     async def _async_import_statistics(self, consumptions) -> None:
-        # force sort by datetime
-        consumptions = sorted(
-            consumptions,
-            key=lambda x: (
-                dt_util.as_utc(dt_util.parse_datetime(x["datetime"]))
-                if dt_util.parse_datetime(x["datetime"]) is not None
-                else datetime.min
-            ),
+        if self._import_in_progress:
+            _LOGGER.debug("Import already in progress — skipping")
+            return
+
+        self._import_in_progress = True
+        try:
+            # force sort by datetime
+            consumptions = sorted(
+                consumptions,
+                key=lambda x: (
+                    dt_util.as_utc(dt_util.parse_datetime(x["datetime"]))
+                    if dt_util.parse_datetime(x["datetime"]) is not None
+                    else datetime.min
+                ),
+            )
+
+            # Deduplicate per hour: keep max accumulatedConsumption for each hour
+            normalized = {}
+            for metric in consumptions:
+                dt = dt_util.parse_datetime(metric["datetime"])
+                if dt is None:
+                    continue
+                start_ts = dt_util.as_utc(dt).replace(minute=0, second=0, microsecond=0)
+                val = round(metric["accumulatedConsumption"], 4)
+                current = normalized.get(start_ts)
+                if current is None or val > current:
+                    normalized[start_ts] = val
+
+            items = sorted(normalized.items())  # list of (start_ts, state)
+
+            stats = []
+            last_state = None
+            regression_found = False
+            regression_point = None
+
+            # persisted last sum (we only keep sum, not start)
+            persisted_sum = self._data.get("last_imported_sum")
+
+            if persisted_sum is not None and items:
+                latest_incoming_state = items[-1][1]
+                if latest_incoming_state < persisted_sum:
+                    regression_found = True
+                    regression_point = (items[-1][0], latest_incoming_state, persisted_sum)
+
+            for i, (start_ts, state) in enumerate(items):
+                if last_state is not None and state < last_state:
+                    regression_found = True
+                    regression_point = (start_ts, state, last_state)
+                    break
+
+                stats.append(
+                    {
+                        "start": start_ts,
+                        "state": state,
+                        # -- required to show in historic/recorder
+                        # -- incremental sum = current total value, so we don't show negative values in HA
+                        "sum": state,
+                        # "last_reset": start_ts,
+                    }
+                )
+
+                last_state = state
+
+            if regression_found:
+                count = int(self._data.get("neg_regress_count", 0)) + 1
+                self._data["neg_regress_count"] = count
+                self._data["neg_regress_last_ts"] = dt_util.utcnow()
+
+                _LOGGER.warning(
+                    "Negative regression for %s at %s: %s < %s. Count=%d",
+                    self.contract, regression_point[0], regression_point[1], regression_point[2], count
+                )
+
+                if count < 3:
+                    _LOGGER.warning("Skipping this import cycle due to regression (count < 3).")
+                    return
+                else:
+                    _LOGGER.warning("Triggering weekly reimport due to repeated regression (count >= 3).")
+                    try:
+                        await self._reimport_last_week()
+                        self._data["neg_regress_count"] = 0
+                    except Exception:
+                        _LOGGER.exception("Weekly reimport failed.")
+                    return
+
+            if stats:
+                metadata = {
+                    "has_mean": False,
+                    "has_sum": True,
+                    "name": f"Contador {self.id}",
+                    "source": "recorder",  # required
+                    "statistic_id": self.internal_sensor_id,
+                    "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
+                }
+                _LOGGER.debug(f"Adding metric: {metadata} {stats}")
+                async_import_statistics(self.hass, metadata, stats)
+
+                self._data["last_imported_sum"] = stats[-1]["sum"]
+                self._data["neg_regress_count"] = 0
+                self._data["neg_regress_last_ts"] = None
+
+                _LOGGER.info("Imported %d points for %s", len(stats), self.contract)
+        finally:
+            self._import_in_progress = False
+
+    async def _reimport_last_week(self) -> None:
+        today = datetime.now()
+        start = today - timedelta(days=7)
+
+        await self._ensure_token()
+
+        consumptions = await self.hass.async_add_executor_job(
+            self._api.consumptions, start, today + timedelta(days=1), self.contract
         )
 
-        stats = list()
-        for metric in consumptions:
-            start_ts = dt_util.parse_datetime(metric["datetime"])
-            start_ts = dt_util.as_utc(start_ts).replace(
-                minute=0, second=0, microsecond=0
-            )
+        if not consumptions:
+            _LOGGER.warning("No data available for weekly reimport for %s", self.contract)
+            return
 
-            # round: fixes decimal with 20 digits precision
-            state = round(metric["accumulatedConsumption"], 4)
-            stats.append(
-                {
-                    "start": start_ts,
-                    "state": state,
-                    # -- required to show in historic/recorder
-                    # -- incremental sum = current total value, so we don't show negative values in HA
-                    "sum": state,
-                    # "last_reset": start_ts,
-                }
-            )
-        metadata = {
-            "has_mean": False,
-            "has_sum": True,
-            "name": f"Contador {self.id}",
-            "source": "recorder",  # required
-            "statistic_id": self.internal_sensor_id,
-            "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
-        }
-        _LOGGER.debug(f"Adding metric: {metadata} {stats}")
-        async_import_statistics(self.hass, metadata, stats)
+        await self._async_import_statistics(consumptions)
+
 
     async def clear_all_stored_data(self) -> None:
         await self._clear_statistics()
@@ -306,20 +425,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         today = datetime.now()
         one_year_ago = today - timedelta(days=days)
 
-        if self._api.is_token_expired():
-            entry = self.hass.config_entries.async_get_entry(self.entry_id)
-
-            self.hass.config_entries.async_update_entry(
-                entry, data={k: v for k, v in entry.data.items() if k != "token"}
-            )
-
-            await self.hass.async_add_executor_job(self._api.login)
-            new_token = self._api.get_token()
-
-            if new_token:
-                self.hass.config_entries.async_update_entry(
-                    entry, data={**entry.data, "token": new_token}
-                )
+        await self._ensure_token()
 
         current_date = one_year_ago
         while current_date < today:
@@ -347,7 +453,7 @@ class ContadorAgua(CoordinatorEntity, SensorEntity):
         self._attr_has_entity_name = True
         self._attr_should_poll = False
         self._attr_device_class = SensorDeviceClass.WATER
-        self._attr_state_class = SensorStateClass.TOTAL
+        self._attr_state_class = SensorStateClass.TOTAL_INCREASING
         self._attr_native_unit_of_measurement = UnitOfVolume.CUBIC_METERS
 
     @property
