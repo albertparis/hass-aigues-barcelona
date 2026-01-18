@@ -344,6 +344,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             "source": "recorder",
             "statistic_id": self.internal_sensor_id,
             "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
+            "unit_class": "volume",  # Required from HA 2026.11
         }
         # Add mean_type for newer HA versions (required from 2026.11)
         if StatisticMeanType is not None:
