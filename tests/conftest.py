@@ -27,8 +27,10 @@ def mock_consumptions_with_duplicates():
         hour_time = base_time + timedelta(hours=i)
         # Add multiple entries per hour with different values
         for minute in [0, 15, 30, 45]:
-            consumptions.append({
-                "datetime": (hour_time + timedelta(minutes=minute)).isoformat(),
-                "accumulatedConsumption": 100.0 + (i * 0.5) + (minute * 0.01),
-            })
+            consumptions.append(
+                {
+                    "datetime": (hour_time + timedelta(minutes=minute)).isoformat(),
+                    "accumulatedConsumption": 100.0 + (i * 0.5) + (minute * 0.01),
+                }
+            )
     return consumptions

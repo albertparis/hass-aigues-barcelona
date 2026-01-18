@@ -18,13 +18,20 @@ TIMEOUT = 60
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 
+
 class ChallengeResponse(TypedDict):
     captchaId: str
     code: str
 
+
 class AiguesApiClient:
     def __init__(
-            self, username, password, twocaptcha_api_key, contract=None, session: requests.Session = None
+        self,
+        username,
+        password,
+        twocaptcha_api_key,
+        contract=None,
+        session: requests.Session = None,
     ):
         if session is None:
             session = requests.Session()
@@ -98,7 +105,11 @@ class AiguesApiClient:
 
         if isinstance(parsed, dict):
             msg = parsed.get("message", resp.text)
-        elif isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+        elif (
+            isinstance(parsed, list)
+            and len(parsed) == 1
+            and isinstance(parsed[0], dict)
+        ):
             msg = parsed[0].get("message", resp.text)
 
         if resp.status_code == 500:
@@ -118,7 +129,9 @@ class AiguesApiClient:
         if self._captcha_cooldown_until is not None:
             now = datetime.datetime.utcnow()
             if now < self._captcha_cooldown_until:
-                raise Exception(f"2Captcha cooldown active until {self._captcha_cooldown_until.isoformat()}")
+                raise Exception(
+                    f"2Captcha cooldown active until {self._captcha_cooldown_until.isoformat()}"
+                )
 
         if getattr(self, "_login_in_progress", False):
             raise Exception("Login already in progress")
@@ -129,23 +142,33 @@ class AiguesApiClient:
             client = TwoCaptcha(self._twocaptcha_api_key)
 
             try:
-                response: ChallengeResponse = client.recaptcha(sitekey=RECAPTCHA_V2_SITEKEY, url=RECAPTCHA_V2_PAGEURL)
+                response: ChallengeResponse = client.recaptcha(
+                    sitekey=RECAPTCHA_V2_SITEKEY, url=RECAPTCHA_V2_PAGEURL
+                )
 
                 if not response or "code" not in response:
-                    self._captcha_cooldown_until = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+                    self._captcha_cooldown_until = (
+                        datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+                    )
                     raise RuntimeError(f"2Captcha no code in response: {response}")
 
                 recaptcha = response["code"]
             except api.NetworkException as e:
-                self._captcha_cooldown_until = datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
+                self._captcha_cooldown_until = (
+                    datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
+                )
                 _LOGGER.error("2Captcha network error: %s", e)
                 raise
             except api.ApiException as e:
-                self._captcha_cooldown_until = datetime.datetime.utcnow() + datetime.timedelta(minutes=30)
+                self._captcha_cooldown_until = (
+                    datetime.datetime.utcnow() + datetime.timedelta(minutes=30)
+                )
                 _LOGGER.error("2Captcha API error: %s", e)
                 raise
             except Exception as e:
-                self._captcha_cooldown_until = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+                self._captcha_cooldown_until = (
+                    datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+                )
                 _LOGGER.error("Unexpected 2Captcha error: %s", e)
                 raise
 
@@ -172,7 +195,9 @@ class AiguesApiClient:
             try:
                 r = self._query(path, query, body, headers, method="POST")
             except Exception as e:
-                self._captcha_cooldown_until = datetime.datetime.utcnow() + datetime.timedelta(minutes=30)
+                self._captcha_cooldown_until = (
+                    datetime.datetime.utcnow() + datetime.timedelta(minutes=30)
+                )
                 _LOGGER.error("Login POST failed, setting cooldown: %s", e)
                 raise
 
@@ -182,14 +207,18 @@ class AiguesApiClient:
 
             if error:
                 _LOGGER.warning(error)
-                self._captcha_cooldown_until = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+                self._captcha_cooldown_until = (
+                    datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+                )
 
                 return False
 
             access_token = r.json().get("access_token", None)
             if not access_token:
                 _LOGGER.warning("Access token missing")
-                self._captcha_cooldown_until = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+                self._captcha_cooldown_until = (
+                    datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+                )
 
                 return False
 
@@ -284,7 +313,7 @@ class AiguesApiClient:
     def first_contract(self):
         contract_ids = self.contract_id
         assert (
-                len(contract_ids) == 1
+            len(contract_ids) == 1
         ), "Provide a Contract ID to retrieve specific invoices"
 
         return contract_ids[0]
@@ -315,7 +344,7 @@ class AiguesApiClient:
         return self.invoices(contract, user, last_months=0, mode="DEBT")
 
     def consumptions(
-            self, date_from, date_to=None, contract=None, user=None, frequency="HOURLY"
+        self, date_from, date_to=None, contract=None, user=None, frequency="HOURLY"
     ):
         if user is None:
             user = self._return_token_field("name")

@@ -78,7 +78,15 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
     contadores = list()
 
     for contract in contracts:
-        coordinator = ContratoAgua(hass, username, password, twocaptcha_api_key, contract, token=token, entry_id=config_entry.entry_id)
+        coordinator = ContratoAgua(
+            hass,
+            username,
+            password,
+            twocaptcha_api_key,
+            contract,
+            token=token,
+            entry_id=config_entry.entry_id,
+        )
         contadores.append(ContadorAgua(coordinator))
 
     # postpone first refresh to speed up startup
@@ -102,15 +110,15 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
 
 class ContratoAgua(TimestampDataUpdateCoordinator):
     def __init__(
-            self,
-            hass: HomeAssistant,
-            username: str,
-            password: str,
-            twocaptcha_api_key: str,
-            contract: str,
-            token: str,
-            entry_id: str,
-            prev_data=None,
+        self,
+        hass: HomeAssistant,
+        username: str,
+        password: str,
+        twocaptcha_api_key: str,
+        contract: str,
+        token: str,
+        entry_id: str,
+        prev_data=None,
     ) -> None:
         """Initialize the data handler."""
         self.reset = prev_data is None
@@ -195,7 +203,10 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             await self._ensure_token()
 
             consumptions = await self.hass.async_add_executor_job(
-                self._api.consumptions, LAST_WEEK, TODAY + timedelta(days=1), self.contract
+                self._api.consumptions,
+                LAST_WEEK,
+                TODAY + timedelta(days=1),
+                self.contract,
             )
         except ConfigEntryAuthFailed as exp:
             _LOGGER.error("Token has expired, cannot check consumptions.")
@@ -291,7 +302,9 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 for stat in existing_stats[self.internal_sensor_id]:
                     if stat.get("start_ts") is not None:
                         existing_ts = dt_util.utc_from_timestamp(stat["start_ts"])
-                        existing_ts = existing_ts.replace(minute=0, second=0, microsecond=0)
+                        existing_ts = existing_ts.replace(
+                            minute=0, second=0, microsecond=0
+                        )
                         existing_timestamps.add(existing_ts)
                 _LOGGER.debug(
                     "Found %d existing statistics for %s (last %d days)",
@@ -307,7 +320,9 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             )
         return existing_timestamps
 
-    def _normalize_consumptions(self, consumptions: List[Dict]) -> List[Tuple[datetime, float]]:
+    def _normalize_consumptions(
+        self, consumptions: List[Dict]
+    ) -> List[Tuple[datetime, float]]:
         """Normalize consumption data to hourly buckets.
 
         Returns a sorted list of (timestamp, value) tuples, keeping the max value per hour.
@@ -385,15 +400,19 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
                 while fill_ts <= max_fill_ts:
                     if fill_ts not in existing_timestamps:
-                        stats.append({
-                            "start": fill_ts,
-                            "state": most_recent_state,
-                            "sum": most_recent_state,
-                        })
+                        stats.append(
+                            {
+                                "start": fill_ts,
+                                "state": most_recent_state,
+                                "sum": most_recent_state,
+                            }
+                        )
                     fill_ts += timedelta(hours=1)
 
             if stats:
-                async_import_statistics(self.hass, self._get_statistics_metadata(), stats)
+                async_import_statistics(
+                    self.hass, self._get_statistics_metadata(), stats
+                )
                 _LOGGER.info("Imported %d points for %s", len(stats), self.contract)
             else:
                 _LOGGER.debug("No new statistics to import for %s", self.contract)
@@ -416,7 +435,9 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         await self._ensure_token()
 
         # Pre-fetch existing statistics for the entire period to avoid duplicates
-        existing_timestamps = await self._get_existing_statistics(lookback_days=days + 7)
+        existing_timestamps = await self._get_existing_statistics(
+            lookback_days=days + 7
+        )
 
         current_date = start_date
         imported_count = 0
@@ -435,10 +456,17 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
             current_date += timedelta(weeks=1)
 
-        _LOGGER.info("Completed importing %d weeks of historical data for %s", imported_count, self.contract)
+        _LOGGER.info(
+            "Completed importing %d weeks of historical data for %s",
+            imported_count,
+            self.contract,
+        )
 
     async def _async_import_statistics_with_existing(
-        self, consumptions, existing_timestamps: Set[datetime], fill_to_now: bool = False
+        self,
+        consumptions,
+        existing_timestamps: Set[datetime],
+        fill_to_now: bool = False,
     ) -> None:
         """Import statistics using pre-fetched existing timestamps.
 
@@ -465,8 +493,12 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 existing_timestamps.add(start_ts)
 
             if stats:
-                async_import_statistics(self.hass, self._get_statistics_metadata(), stats)
-                _LOGGER.debug("Imported %d historical points for %s", len(stats), self.contract)
+                async_import_statistics(
+                    self.hass, self._get_statistics_metadata(), stats
+                )
+                _LOGGER.debug(
+                    "Imported %d historical points for %s", len(stats), self.contract
+                )
         finally:
             self._import_in_progress = False
 

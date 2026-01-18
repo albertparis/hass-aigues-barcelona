@@ -17,12 +17,12 @@ class TestNormalizeConsumptions:
     def _create_normalize_function(self):
         """Create a standalone normalize function for testing."""
         from datetime import timezone
-        
+
         def normalize_consumptions(consumptions):
             """Normalize consumption data to hourly buckets."""
             # Use UTC-aware min datetime for comparison
             min_dt = datetime.min.replace(tzinfo=timezone.utc)
-            
+
             consumptions = sorted(
                 consumptions,
                 key=lambda x: (
@@ -44,7 +44,7 @@ class TestNormalizeConsumptions:
                     normalized[start_ts] = val
 
             return sorted(normalized.items())
-        
+
         return normalize_consumptions
 
     def test_normalize_empty_list(self):
@@ -63,7 +63,7 @@ class TestNormalizeConsumptions:
             }
         ]
         result = normalize(consumptions)
-        
+
         assert len(result) == 1
         assert result[0][1] == 100.5
 
@@ -77,7 +77,7 @@ class TestNormalizeConsumptions:
             {"datetime": "2026-01-15T10:45:00", "accumulatedConsumption": 100.8},
         ]
         result = normalize(consumptions)
-        
+
         assert len(result) == 1
         # Should keep the max value (101.0)
         assert result[0][1] == 101.0
@@ -91,7 +91,7 @@ class TestNormalizeConsumptions:
             {"datetime": "2026-01-15T12:00:00", "accumulatedConsumption": 102.0},
         ]
         result = normalize(consumptions)
-        
+
         assert len(result) == 3
         assert result[0][1] == 100.0
         assert result[1][1] == 101.0
@@ -106,7 +106,7 @@ class TestNormalizeConsumptions:
             {"datetime": "2026-01-15T11:00:00", "accumulatedConsumption": 101.0},
         ]
         result = normalize(consumptions)
-        
+
         assert len(result) == 3
         # Should be sorted by timestamp
         assert result[0][1] == 100.0
@@ -117,10 +117,13 @@ class TestNormalizeConsumptions:
         """Test that values are rounded to 4 decimal places."""
         normalize = self._create_normalize_function()
         consumptions = [
-            {"datetime": "2026-01-15T10:00:00", "accumulatedConsumption": 100.123456789},
+            {
+                "datetime": "2026-01-15T10:00:00",
+                "accumulatedConsumption": 100.123456789,
+            },
         ]
         result = normalize(consumptions)
-        
+
         assert result[0][1] == 100.1235
 
     def test_normalize_skips_invalid_datetime(self):
@@ -131,7 +134,7 @@ class TestNormalizeConsumptions:
             {"datetime": "2026-01-15T10:00:00", "accumulatedConsumption": 101.0},
         ]
         result = normalize(consumptions)
-        
+
         assert len(result) == 1
         assert result[0][1] == 101.0
 
@@ -149,7 +152,7 @@ class TestStatisticsMetadata:
             "statistic_id": "sensor.contador_abc123",
             "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
         }
-        
+
         assert "has_sum" in metadata
         assert "name" in metadata
         assert "source" in metadata
@@ -166,7 +169,7 @@ class TestStatisticsMetadata:
             "statistic_id": f"sensor.contador_{contract_id}",
             "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
         }
-        
+
         assert metadata["has_sum"] is True
         assert metadata["name"] == "Contador abc123"
         assert metadata["source"] == "recorder"
@@ -183,20 +186,20 @@ class TestDuplicateFiltering:
             datetime(2026, 1, 15, 10, 0, 0),
             datetime(2026, 1, 15, 12, 0, 0),
         }
-        
+
         items = [
             (datetime(2026, 1, 15, 10, 0, 0), 100.0),  # Should be filtered
             (datetime(2026, 1, 15, 11, 0, 0), 101.0),  # Should pass
             (datetime(2026, 1, 15, 12, 0, 0), 102.0),  # Should be filtered
             (datetime(2026, 1, 15, 13, 0, 0), 103.0),  # Should pass
         ]
-        
+
         stats = []
         for start_ts, state in items:
             if start_ts in existing_timestamps:
                 continue
             stats.append({"start": start_ts, "state": state, "sum": state})
-        
+
         assert len(stats) == 2
         assert stats[0]["state"] == 101.0
         assert stats[1]["state"] == 103.0
@@ -204,18 +207,18 @@ class TestDuplicateFiltering:
     def test_empty_existing_timestamps(self):
         """Test that all items pass when no existing timestamps."""
         existing_timestamps = set()
-        
+
         items = [
             (datetime(2026, 1, 15, 10, 0, 0), 100.0),
             (datetime(2026, 1, 15, 11, 0, 0), 101.0),
         ]
-        
+
         stats = []
         for start_ts, state in items:
             if start_ts in existing_timestamps:
                 continue
             stats.append({"start": start_ts, "state": state, "sum": state})
-        
+
         assert len(stats) == 2
 
 
@@ -228,19 +231,21 @@ class TestFillToNowLogic:
         most_recent_state = 100.0
         max_fill_ts = datetime(2026, 1, 15, 13, 0, 0)
         existing_timestamps = set()
-        
+
         stats = []
         fill_ts = most_recent_ts + timedelta(hours=1)
-        
+
         while fill_ts <= max_fill_ts:
             if fill_ts not in existing_timestamps:
-                stats.append({
-                    "start": fill_ts,
-                    "state": most_recent_state,
-                    "sum": most_recent_state,
-                })
+                stats.append(
+                    {
+                        "start": fill_ts,
+                        "state": most_recent_state,
+                        "sum": most_recent_state,
+                    }
+                )
             fill_ts += timedelta(hours=1)
-        
+
         # Should have 3 fill entries: 11:00, 12:00, 13:00
         assert len(stats) == 3
         for stat in stats:
@@ -252,19 +257,21 @@ class TestFillToNowLogic:
         most_recent_state = 100.0
         max_fill_ts = datetime(2026, 1, 15, 13, 0, 0)
         existing_timestamps = {datetime(2026, 1, 15, 12, 0, 0)}
-        
+
         stats = []
         fill_ts = most_recent_ts + timedelta(hours=1)
-        
+
         while fill_ts <= max_fill_ts:
             if fill_ts not in existing_timestamps:
-                stats.append({
-                    "start": fill_ts,
-                    "state": most_recent_state,
-                    "sum": most_recent_state,
-                })
+                stats.append(
+                    {
+                        "start": fill_ts,
+                        "state": most_recent_state,
+                        "sum": most_recent_state,
+                    }
+                )
             fill_ts += timedelta(hours=1)
-        
+
         # Should have 2 fill entries: 11:00, 13:00 (12:00 is skipped)
         assert len(stats) == 2
         timestamps = [s["start"] for s in stats]
@@ -276,19 +283,21 @@ class TestFillToNowLogic:
         most_recent_state = 100.0
         max_fill_ts = datetime(2026, 1, 15, 13, 0, 0)  # Same as most recent
         existing_timestamps = set()
-        
+
         stats = []
         fill_ts = most_recent_ts + timedelta(hours=1)
-        
+
         while fill_ts <= max_fill_ts:
             if fill_ts not in existing_timestamps:
-                stats.append({
-                    "start": fill_ts,
-                    "state": most_recent_state,
-                    "sum": most_recent_state,
-                })
+                stats.append(
+                    {
+                        "start": fill_ts,
+                        "state": most_recent_state,
+                        "sum": most_recent_state,
+                    }
+                )
             fill_ts += timedelta(hours=1)
-        
+
         # Should have no fill entries
         assert len(stats) == 0
 
@@ -313,7 +322,7 @@ class TestRealApiResponse:
                 "maxFlow": 0.07,
                 "minFlowTime": "00:32:42",
                 "maxFlowTime": "19:32:42",
-                "number": "X00AA000000TEST"
+                "number": "X00AA000000TEST",
             },
             {
                 "contractNumber": "1234567",
@@ -328,7 +337,7 @@ class TestRealApiResponse:
                 "maxFlow": 0.077,
                 "minFlowTime": "00:32:41",
                 "maxFlowTime": "10:32:42",
-                "number": "X00AA000000TEST"
+                "number": "X00AA000000TEST",
             },
             {
                 "contractNumber": "1234567",
@@ -343,7 +352,7 @@ class TestRealApiResponse:
                 "maxFlow": 0.067,
                 "minFlowTime": "00:32:39",
                 "maxFlowTime": "15:32:38",
-                "number": "X00AA000000TEST"
+                "number": "X00AA000000TEST",
             },
             {
                 "contractNumber": "1234567",
@@ -358,7 +367,7 @@ class TestRealApiResponse:
                 "maxFlow": 0.02,
                 "minFlowTime": "00:32:37",
                 "maxFlowTime": "20:32:38",
-                "number": "X00AA000000TEST"
+                "number": "X00AA000000TEST",
             },
             {
                 "contractNumber": "1234567",
@@ -373,7 +382,7 @@ class TestRealApiResponse:
                 "maxFlow": 0.061,
                 "minFlowTime": "00:32:36",
                 "maxFlowTime": "09:32:35",
-                "number": "X00AA000000TEST"
+                "number": "X00AA000000TEST",
             },
             {
                 "contractNumber": "1234567",
@@ -388,7 +397,7 @@ class TestRealApiResponse:
                 "maxFlow": 0.066,
                 "minFlowTime": "00:32:34",
                 "maxFlowTime": "10:32:35",
-                "number": "X00AA000000TEST"
+                "number": "X00AA000000TEST",
             },
             {
                 "contractNumber": "1234567",
@@ -403,25 +412,25 @@ class TestRealApiResponse:
                 "maxFlow": 0.058,
                 "minFlowTime": "00:32:32",
                 "maxFlowTime": "10:32:33",
-                "number": "X00AA000000TEST"
-            }
+                "number": "X00AA000000TEST",
+            },
         ]
 
     def test_normalize_real_daily_data(self, real_daily_consumptions):
         """Test normalization with real daily consumption data."""
         normalize = TestNormalizeConsumptions()._create_normalize_function()
         result = normalize(real_daily_consumptions)
-        
+
         # Daily data should result in 7 entries (one per day, grouped by hour)
         assert len(result) == 7
-        
+
         # Values should be in ascending order (accumulated consumption)
         values = [r[1] for r in result]
         assert values == sorted(values)
-        
+
         # First value should be 743.882
         assert result[0][1] == 743.882
-        
+
         # Last value should be 745.613
         assert result[-1][1] == 745.613
 
@@ -429,47 +438,64 @@ class TestRealApiResponse:
         """Test that timezone offsets in datetime are handled correctly."""
         normalize = TestNormalizeConsumptions()._create_normalize_function()
         result = normalize(real_daily_consumptions)
-        
+
         # All timestamps should be timezone-aware (UTC)
         for ts, _ in result:
             assert ts.tzinfo is not None
 
-    def test_real_data_accumulated_consumption_increasing(self, real_daily_consumptions):
+    def test_real_data_accumulated_consumption_increasing(
+        self, real_daily_consumptions
+    ):
         """Test that accumulated consumption values are increasing."""
         values = [c["accumulatedConsumption"] for c in real_daily_consumptions]
-        
+
         for i in range(1, len(values)):
-            assert values[i] >= values[i-1], f"Value at index {i} should be >= previous"
+            assert (
+                values[i] >= values[i - 1]
+            ), f"Value at index {i} should be >= previous"
 
     def test_delta_consumption_calculation(self, real_daily_consumptions):
         """Test that delta consumption approximately matches differences."""
         for i in range(1, len(real_daily_consumptions)):
-            prev = real_daily_consumptions[i-1]
+            prev = real_daily_consumptions[i - 1]
             curr = real_daily_consumptions[i]
-            
-            expected_delta = curr["accumulatedConsumption"] - prev["accumulatedConsumption"]
+
+            expected_delta = (
+                curr["accumulatedConsumption"] - prev["accumulatedConsumption"]
+            )
             actual_delta = curr["deltaConsumption"]
-            
+
             # Allow small floating point differences
-            assert abs(expected_delta - actual_delta) < 0.01, \
-                f"Delta mismatch at index {i}: expected {expected_delta:.3f}, got {actual_delta:.3f}"
+            assert (
+                abs(expected_delta - actual_delta) < 0.01
+            ), f"Delta mismatch at index {i}: expected {expected_delta:.3f}, got {actual_delta:.3f}"
 
     def test_parse_consumptions_real_data(self, real_daily_consumptions):
         """Test parsing real consumption data with the API client method."""
         from custom_components.aigues_barcelona.api import AiguesApiClient
-        
+
         client = AiguesApiClient(
             username="test",
             password="test",
             twocaptcha_api_key="test",
         )
-        
+
         # Test parsing accumulated consumption
         accumulated = client.parse_consumptions(real_daily_consumptions)
-        assert accumulated == [743.882, 744.211, 744.555, 744.714, 745.092, 745.465, 745.613]
-        
+        assert accumulated == [
+            743.882,
+            744.211,
+            744.555,
+            744.714,
+            745.092,
+            745.465,
+            745.613,
+        ]
+
         # Test parsing delta consumption
-        deltas = client.parse_consumptions(real_daily_consumptions, key="deltaConsumption")
+        deltas = client.parse_consumptions(
+            real_daily_consumptions, key="deltaConsumption"
+        )
         assert deltas == [0.356, 0.329, 0.344, 0.159, 0.378, 0.373, 0.148]
 
 
@@ -486,17 +512,17 @@ class TestTimestampExtraction:
                 {"start_ts": base_ts + 7200},  # +2 hours
             ]
         }
-        
+
         existing_timestamps = set()
         sensor_id = "sensor.contador_abc123"
-        
+
         if mock_stats and sensor_id in mock_stats:
             for stat in mock_stats[sensor_id]:
                 if stat.get("start_ts") is not None:
                     existing_ts = dt_util.utc_from_timestamp(stat["start_ts"])
                     existing_ts = existing_ts.replace(minute=0, second=0, microsecond=0)
                     existing_timestamps.add(existing_ts)
-        
+
         assert len(existing_timestamps) == 3
 
     def test_extract_timestamps_empty_response(self):
@@ -504,14 +530,14 @@ class TestTimestampExtraction:
         mock_stats = {}
         existing_timestamps = set()
         sensor_id = "sensor.contador_abc123"
-        
+
         if mock_stats and sensor_id in mock_stats:
             for stat in mock_stats[sensor_id]:
                 if stat.get("start_ts") is not None:
                     existing_ts = dt_util.utc_from_timestamp(stat["start_ts"])
                     existing_ts = existing_ts.replace(minute=0, second=0, microsecond=0)
                     existing_timestamps.add(existing_ts)
-        
+
         assert len(existing_timestamps) == 0
 
     def test_extract_timestamps_missing_sensor(self):
@@ -523,12 +549,12 @@ class TestTimestampExtraction:
         }
         existing_timestamps = set()
         sensor_id = "sensor.contador_abc123"
-        
+
         if mock_stats and sensor_id in mock_stats:
             for stat in mock_stats[sensor_id]:
                 if stat.get("start_ts") is not None:
                     existing_ts = dt_util.utc_from_timestamp(stat["start_ts"])
                     existing_ts = existing_ts.replace(minute=0, second=0, microsecond=0)
                     existing_timestamps.add(existing_ts)
-        
+
         assert len(existing_timestamps) == 0
