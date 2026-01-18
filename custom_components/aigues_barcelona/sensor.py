@@ -19,6 +19,12 @@ from homeassistant.components.recorder.statistics import async_import_statistics
 from homeassistant.components.recorder.statistics import clear_statistics
 from homeassistant.components.recorder.statistics import list_statistic_ids
 from homeassistant.components.recorder.statistics import statistics_during_period
+
+try:
+    from homeassistant.components.recorder.models.statistics import StatisticMeanType
+except ImportError:
+    # Fallback for older HA versions
+    StatisticMeanType = None
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.components.sensor import SensorStateClass
@@ -277,6 +283,8 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 None,
                 {self.internal_sensor_id},
                 "hour",
+                None,  # units
+                {"sum"},  # types - we only need sum for our sensor
             )
 
             if existing_stats and self.internal_sensor_id in existing_stats:
@@ -330,13 +338,17 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
     def _get_statistics_metadata(self) -> Dict:
         """Return metadata for statistics import."""
-        return {
+        metadata = {
             "has_sum": True,
             "name": f"Contador {self.id}",
             "source": "recorder",
             "statistic_id": self.internal_sensor_id,
             "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
         }
+        # Add mean_type for newer HA versions (required from 2026.11)
+        if StatisticMeanType is not None:
+            metadata["mean_type"] = StatisticMeanType.NONE
+        return metadata
 
     async def _async_import_statistics(self, consumptions, fill_to_now=False) -> None:
         if self._import_in_progress:
