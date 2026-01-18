@@ -211,7 +211,7 @@ class AiguesApiClient:
             "Ocp-Apim-Subscription-Key": "6a98b8b8c7b243cda682a43f09e6588b;product=portlet-login-ofex",
         }
 
-        r = self._query(path, query=None, json=None, headers=headers, method="POST")
+        self._query(path, query=None, json=None, headers=headers, method="POST")
 
     def set_token(self, token: str):
         host = ".".join(self.api_host.split(".")[1:])

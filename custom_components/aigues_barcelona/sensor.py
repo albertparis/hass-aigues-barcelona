@@ -263,7 +263,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
     async def _get_existing_statistics(self, lookback_days: int = 7) -> Set[datetime]:
         """Query existing statistics timestamps to avoid duplicates.
-        
+
         Returns a set of datetime objects representing hours that already have statistics.
         This prevents conflicts with Home Assistant's hourly statistics compilation.
         """
@@ -278,7 +278,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 {self.internal_sensor_id},
                 "hour",
             )
-            
+
             if existing_stats and self.internal_sensor_id in existing_stats:
                 for stat in existing_stats[self.internal_sensor_id]:
                     if stat.get("start_ts") is not None:
@@ -301,7 +301,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
     def _normalize_consumptions(self, consumptions: List[Dict]) -> List[Tuple[datetime, float]]:
         """Normalize consumption data to hourly buckets.
-        
+
         Returns a sorted list of (timestamp, value) tuples, keeping the max value per hour.
         """
         # Sort consumptions by datetime
@@ -392,7 +392,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
     async def import_old_consumptions(self, days: int = 365) -> None:
         """Import historical consumption data.
-        
+
         Fetches consumption data week by week going back the specified number of days.
         Uses a larger lookback window for duplicate checking since we're importing
         historical data.
@@ -404,7 +404,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
         # Pre-fetch existing statistics for the entire period to avoid duplicates
         existing_timestamps = await self._get_existing_statistics(lookback_days=days + 7)
-        
+
         current_date = start_date
         imported_count = 0
         while current_date < today:
@@ -421,14 +421,14 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 _LOGGER.debug("No data available for week of %s", current_date)
 
             current_date += timedelta(weeks=1)
-        
+
         _LOGGER.info("Completed importing %d weeks of historical data for %s", imported_count, self.contract)
 
     async def _async_import_statistics_with_existing(
         self, consumptions, existing_timestamps: Set[datetime], fill_to_now: bool = False
     ) -> None:
         """Import statistics using pre-fetched existing timestamps.
-        
+
         This is used for bulk historical imports where we want to check duplicates
         against a pre-fetched set of existing statistics.
         """
