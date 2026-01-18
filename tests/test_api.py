@@ -4,7 +4,6 @@ import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
-import requests
 
 from custom_components.aigues_barcelona.api import AiguesApiClient
 

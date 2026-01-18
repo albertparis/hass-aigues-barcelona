@@ -1,14 +1,11 @@
 """Tests for the Aigues de Barcelona sensor module."""
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from homeassistant.const import UnitOfVolume
 from homeassistant.util import dt as dt_util
-
-from custom_components.aigues_barcelona.const import DOMAIN
 
 
 class TestNormalizeConsumptions:

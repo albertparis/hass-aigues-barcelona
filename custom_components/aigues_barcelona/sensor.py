@@ -295,7 +295,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 {self.internal_sensor_id},
                 "hour",
                 None,  # units
-                {"sum"},  # types - we only need sum for our sensor
+                {"sum"},
             )
 
             if existing_stats and self.internal_sensor_id in existing_stats:
