@@ -218,7 +218,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
         # await self._clear_statistics()
         try:
-            await self._async_import_statistics(consumptions, fill_to_now=True)
+            await self._async_import_statistics(consumptions, fill_to_now=False)
         except Exception:
             _LOGGER.exception("Failed to import statistics")
 
