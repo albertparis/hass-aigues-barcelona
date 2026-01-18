@@ -18,6 +18,7 @@ except ImportError:  # NEW Home Assistant 2024.08
 from homeassistant.components.recorder.statistics import async_import_statistics
 from homeassistant.components.recorder.statistics import clear_statistics
 from homeassistant.components.recorder.statistics import list_statistic_ids
+from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.components.sensor import SensorStateClass
@@ -43,7 +44,7 @@ from .const import DEFAULT_SCAN_PERIOD
 from .const import DOMAIN
 from .const import CONF_2CAPTCHA_APIKEY
 
-from typing import Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -260,6 +261,83 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         #
         # return None
 
+    async def _get_existing_statistics(self, lookback_days: int = 7) -> Set[datetime]:
+        """Query existing statistics timestamps to avoid duplicates.
+        
+        Returns a set of datetime objects representing hours that already have statistics.
+        This prevents conflicts with Home Assistant's hourly statistics compilation.
+        """
+        existing_timestamps: Set[datetime] = set()
+        try:
+            start_time = dt_util.utcnow() - timedelta(days=lookback_days)
+            existing_stats = await get_db_instance(self.hass).async_add_executor_job(
+                statistics_during_period,
+                self.hass,
+                start_time,
+                None,
+                {self.internal_sensor_id},
+                "hour",
+            )
+            
+            if existing_stats and self.internal_sensor_id in existing_stats:
+                for stat in existing_stats[self.internal_sensor_id]:
+                    if stat.get("start_ts") is not None:
+                        existing_ts = dt_util.utc_from_timestamp(stat["start_ts"])
+                        existing_ts = existing_ts.replace(minute=0, second=0, microsecond=0)
+                        existing_timestamps.add(existing_ts)
+                _LOGGER.debug(
+                    "Found %d existing statistics for %s (last %d days)",
+                    len(existing_timestamps),
+                    self.contract,
+                    lookback_days,
+                )
+        except Exception as e:
+            _LOGGER.warning(
+                "Failed to query existing statistics for %s: %s. Continuing without duplicate check.",
+                self.contract,
+                e,
+            )
+        return existing_timestamps
+
+    def _normalize_consumptions(self, consumptions: List[Dict]) -> List[Tuple[datetime, float]]:
+        """Normalize consumption data to hourly buckets.
+        
+        Returns a sorted list of (timestamp, value) tuples, keeping the max value per hour.
+        """
+        # Sort consumptions by datetime
+        consumptions = sorted(
+            consumptions,
+            key=lambda x: (
+                dt_util.as_utc(dt_util.parse_datetime(x["datetime"]))
+                if dt_util.parse_datetime(x["datetime"]) is not None
+                else datetime.min
+            ),
+        )
+
+        # Deduplicate per hour: keep max accumulatedConsumption for each hour
+        normalized: Dict[datetime, float] = {}
+        for metric in consumptions:
+            dt = dt_util.parse_datetime(metric["datetime"])
+            if dt is None:
+                continue
+            start_ts = dt_util.as_utc(dt).replace(minute=0, second=0, microsecond=0)
+            val = round(metric["accumulatedConsumption"], 4)
+            current = normalized.get(start_ts)
+            if current is None or val > current:
+                normalized[start_ts] = val
+
+        return sorted(normalized.items())
+
+    def _get_statistics_metadata(self) -> Dict:
+        """Return metadata for statistics import."""
+        return {
+            "has_sum": True,
+            "name": f"Contador {self.id}",
+            "source": "recorder",
+            "statistic_id": self.internal_sensor_id,
+            "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
+        }
+
     async def _async_import_statistics(self, consumptions, fill_to_now=False) -> None:
         if self._import_in_progress:
             _LOGGER.debug("Import already in progress — skipping")
@@ -267,80 +345,45 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
         self._import_in_progress = True
         try:
-            # force sort by datetime
-            consumptions = sorted(
-                consumptions,
-                key=lambda x: (
-                    dt_util.as_utc(dt_util.parse_datetime(x["datetime"]))
-                    if dt_util.parse_datetime(x["datetime"]) is not None
-                    else datetime.min
-                ),
-            )
+            # Query existing statistics to avoid duplicates
+            existing_timestamps = await self._get_existing_statistics(lookback_days=7)
 
-            # Deduplicate per hour: keep max accumulatedConsumption for each hour
-            normalized = {}
-            for metric in consumptions:
-                dt = dt_util.parse_datetime(metric["datetime"])
-                if dt is None:
-                    continue
-                start_ts = dt_util.as_utc(dt).replace(minute=0, second=0, microsecond=0)
-                val = round(metric["accumulatedConsumption"], 4)
-                current = normalized.get(start_ts)
-                if current is None or val > current:
-                    normalized[start_ts] = val
+            # Normalize to hourly buckets
+            items = self._normalize_consumptions(consumptions)
+            if not items:
+                _LOGGER.debug("No valid consumptions to process for %s", self.contract)
+                return
 
-            items = sorted(normalized.items())  # list of (start_ts, state)
+            # Track the most recent data point for fill_to_now (before filtering)
+            most_recent_ts, most_recent_state = items[-1]
 
+            # Build stats list, filtering out duplicates
             stats = []
-            last_state = None
-            last_ts = None
-
             for start_ts, state in items:
-                stats.append(
-                    {
-                        "start": start_ts,
-                        "state": state,
-                        "sum": state,
-                    }
-                )
+                if start_ts in existing_timestamps:
+                    continue
+                stats.append({"start": start_ts, "state": state, "sum": state})
 
-                last_state = state
-                last_ts = start_ts
-
-            if fill_to_now == True and last_state is not None and last_ts is not None:
+            # Fill gaps up to current time (minus 1 hour to avoid conflicts with HA)
+            if fill_to_now:
                 now_utc = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
-                fill_ts = last_ts + timedelta(hours=1)
+                max_fill_ts = now_utc - timedelta(hours=1)
+                fill_ts = most_recent_ts + timedelta(hours=1)
 
-                while fill_ts <= now_utc:
-                    stats.append(
-                        {
+                while fill_ts <= max_fill_ts:
+                    if fill_ts not in existing_timestamps:
+                        stats.append({
                             "start": fill_ts,
-                            "state": last_state,
-                            "sum": last_state,
-                        }
-                    )
-                    _LOGGER.debug(
-                        "Extending stats for %s at %s with last_state=%s",
-                        self.contract,
-                        fill_ts,
-                        last_state,
-                    )
+                            "state": most_recent_state,
+                            "sum": most_recent_state,
+                        })
                     fill_ts += timedelta(hours=1)
 
             if stats:
-                metadata = {
-                    "mean_type": 0,
-                    "unit_class": None,
-                    "has_sum": True,
-                    "name": f"Contador {self.id}",
-                    "source": "recorder",
-                    "statistic_id": self.internal_sensor_id,
-                    "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
-                }
-                _LOGGER.debug(f"Adding metric: {metadata} {stats}")
-                async_import_statistics(self.hass, metadata, stats)
-
+                async_import_statistics(self.hass, self._get_statistics_metadata(), stats)
                 _LOGGER.info("Imported %d points for %s", len(stats), self.contract)
+            else:
+                _LOGGER.debug("No new statistics to import for %s", self.contract)
         finally:
             self._import_in_progress = False
 
@@ -348,23 +391,71 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         await self._clear_statistics()
 
     async def import_old_consumptions(self, days: int = 365) -> None:
+        """Import historical consumption data.
+        
+        Fetches consumption data week by week going back the specified number of days.
+        Uses a larger lookback window for duplicate checking since we're importing
+        historical data.
+        """
         today = datetime.now()
-        one_year_ago = today - timedelta(days=days)
+        start_date = today - timedelta(days=days)
 
         await self._ensure_token()
 
-        current_date = one_year_ago
+        # Pre-fetch existing statistics for the entire period to avoid duplicates
+        existing_timestamps = await self._get_existing_statistics(lookback_days=days + 7)
+        
+        current_date = start_date
+        imported_count = 0
         while current_date < today:
             consumptions = await self.hass.async_add_executor_job(
                 self._api.consumptions_week, current_date, self.contract
             )
 
             if consumptions:
-                await self._async_import_statistics(consumptions, fill_to_now=False)
+                await self._async_import_statistics_with_existing(
+                    consumptions, existing_timestamps, fill_to_now=False
+                )
+                imported_count += 1
             else:
-                _LOGGER.warning(f"No data available for {current_date}")
+                _LOGGER.debug("No data available for week of %s", current_date)
 
             current_date += timedelta(weeks=1)
+        
+        _LOGGER.info("Completed importing %d weeks of historical data for %s", imported_count, self.contract)
+
+    async def _async_import_statistics_with_existing(
+        self, consumptions, existing_timestamps: Set[datetime], fill_to_now: bool = False
+    ) -> None:
+        """Import statistics using pre-fetched existing timestamps.
+        
+        This is used for bulk historical imports where we want to check duplicates
+        against a pre-fetched set of existing statistics.
+        """
+        if self._import_in_progress:
+            _LOGGER.debug("Import already in progress — skipping")
+            return
+
+        self._import_in_progress = True
+        try:
+            items = self._normalize_consumptions(consumptions)
+            if not items:
+                return
+
+            # Build stats list, filtering out duplicates
+            stats = []
+            for start_ts, state in items:
+                if start_ts in existing_timestamps:
+                    continue
+                stats.append({"start": start_ts, "state": state, "sum": state})
+                # Add to existing set to prevent duplicates within this import session
+                existing_timestamps.add(start_ts)
+
+            if stats:
+                async_import_statistics(self.hass, self._get_statistics_metadata(), stats)
+                _LOGGER.debug("Imported %d historical points for %s", len(stats), self.contract)
+        finally:
+            self._import_in_progress = False
 
 
 class ContadorAgua(CoordinatorEntity, SensorEntity):
