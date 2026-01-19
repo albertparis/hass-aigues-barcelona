@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.5.1]
+## [0.6.0]
 
 ### Added
 - Automatic login with 2Captcha integration - no more manual token copying
