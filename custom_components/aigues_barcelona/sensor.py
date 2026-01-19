@@ -64,7 +64,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
 
     username = config_entry.data[CONF_USERNAME]
     password = config_entry.data[CONF_PASSWORD]
-    twocaptcha_api_key = config_entry.data[CONF_2CAPTCHA_APIKEY]
+    twocaptcha_api_key = config_entry.data.get(CONF_2CAPTCHA_APIKEY, "")
     contracts = config_entry.data[CONF_CONTRACT]
     token = config_entry.data.get("token")
 
