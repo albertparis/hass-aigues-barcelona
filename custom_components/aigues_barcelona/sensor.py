@@ -42,6 +42,7 @@ from homeassistant.helpers.update_coordinator import TimestampDataUpdateCoordina
 from homeassistant.util import dt as dt_util
 
 from .api import AiguesApiClient
+from .const import API_ERROR_TOKEN_INVALID
 from .const import API_ERROR_TOKEN_REVOKED
 from .const import ATTR_LAST_MEASURE
 from .const import CONF_CONTRACT
@@ -161,6 +162,10 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         if not self._api.is_token_expired():
             return
 
+        await self._force_relogin()
+
+    async def _force_relogin(self) -> None:
+        """Force a fresh login, clearing any existing token."""
         entry = self.hass.config_entries.async_get_entry(self.entry_id)
 
         # drop old token to force login
@@ -175,6 +180,8 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             self.hass.config_entries.async_update_entry(
                 entry, data={**entry.data, "token": new_token}
             )
+        else:
+            raise Exception("Re-login failed: no token received")
 
     async def _async_update_data(self):
         _LOGGER.info(f"Updating coordinator data for {self.contract}")
@@ -212,9 +219,34 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             _LOGGER.error("Token has expired, cannot check consumptions.")
             raise ConfigEntryAuthFailed from exp
         except Exception as exp:
-            self.async_set_update_error(exp)
-            if API_ERROR_TOKEN_REVOKED in str(exp):
-                raise ConfigEntryAuthFailed from exp
+            error_str = str(exp)
+            # Check if token was invalidated server-side
+            if API_ERROR_TOKEN_INVALID in error_str or API_ERROR_TOKEN_REVOKED in error_str:
+                _LOGGER.warning(
+                    "Token rejected by server (%s), attempting re-login for %s",
+                    error_str,
+                    self.contract,
+                )
+                # Force re-login by clearing token and retrying once
+                try:
+                    await self._force_relogin()
+                    consumptions = await self.hass.async_add_executor_job(
+                        self._api.consumptions,
+                        LAST_WEEK,
+                        TODAY + timedelta(days=1),
+                        self.contract,
+                    )
+                except Exception as retry_exp:
+                    _LOGGER.error(
+                        "Re-login failed for %s: %s", self.contract, retry_exp
+                    )
+                    self.async_set_update_error(retry_exp)
+                    raise ConfigEntryAuthFailed from retry_exp
+            else:
+                _LOGGER.error(
+                    "Error requesting %s data: %s", self.contract, exp
+                )
+                self.async_set_update_error(exp)
 
         if not consumptions:
             _LOGGER.error("No consumptions available")
