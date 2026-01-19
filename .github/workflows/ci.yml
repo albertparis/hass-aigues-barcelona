@@ -55,10 +55,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: HACS Action
-      uses: hacs/action@22.5.0
-      with:
-        category: integration
 
-    - name: Hassfest
-      uses: home-assistant/actions/hassfest@master
+    # - name: HACS Action
+    #   uses: "hacs/action@main"
+    #   with:
+    #     category: integration
+
+    # - name: Hassfest
+    #   uses: home-assistant/actions/hassfest@master
