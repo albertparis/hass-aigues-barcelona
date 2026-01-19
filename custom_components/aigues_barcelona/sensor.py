@@ -7,14 +7,6 @@ from datetime import timedelta
 
 import homeassistant.components.recorder.util as recorder_util
 
-try:
-    from homeassistant.components.recorder.const import (
-        DATA_INSTANCE as RECORDER_DATA_INSTANCE,
-    )
-except ImportError:  # NEW Home Assistant 2024.08
-    from homeassistant.helpers.recorder import (
-        DATA_INSTANCE as RECORDER_DATA_INSTANCE,
-    )
 from homeassistant.components.recorder.statistics import async_import_statistics
 from homeassistant.components.recorder.statistics import clear_statistics
 from homeassistant.components.recorder.statistics import list_statistic_ids
@@ -291,12 +283,11 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
         if to_clear:
             _LOGGER.warning(
-                f"About to delete {len(to_clear)} entries from {self.contract}"
+                f"About to delete {len(to_clear)} statistics entries for {self.contract}"
             )
-            # NOTE: This does not seem to work?
-            await get_db_instance(self.hass).async_add_executor_job(
-                clear_statistics, self.hass.data[RECORDER_DATA_INSTANCE], to_clear
-            )
+            # clear_statistics expects (hass, statistic_ids)
+            clear_statistics(self.hass, to_clear)
+            _LOGGER.info(f"Cleared statistics for {self.contract}")
 
     async def get_last_measurement_stored(self) -> Optional[datetime]:
         """Placeholder — not used.
@@ -428,6 +419,10 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 _LOGGER.debug("No valid consumptions to process for %s", self.contract)
                 return
 
+            # Use first reading as baseline for sum calculation
+            # sum = cumulative consumption from baseline, not absolute meter reading
+            baseline = items[0][1]
+
             # Track the most recent data point for fill_to_now (before filtering)
             most_recent_ts, most_recent_state = items[-1]
 
@@ -436,7 +431,13 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             for start_ts, state in items:
                 if start_ts in existing_timestamps:
                     continue
-                stats.append({"start": start_ts, "state": state, "sum": state})
+                stats.append(
+                    {
+                        "start": start_ts,
+                        "state": state,
+                        "sum": state - baseline,
+                    }
+                )
 
             # Fill gaps up to current time (minus 1 hour to avoid conflicts with HA)
             if fill_to_now:
@@ -450,7 +451,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                             {
                                 "start": fill_ts,
                                 "state": most_recent_state,
-                                "sum": most_recent_state,
+                                "sum": most_recent_state - baseline,
                             }
                         )
                     fill_ts += timedelta(hours=1)
@@ -529,12 +530,21 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             if not items:
                 return
 
+            # Use first reading as baseline for sum calculation
+            baseline = items[0][1]
+
             # Build stats list, filtering out duplicates
             stats = []
             for start_ts, state in items:
                 if start_ts in existing_timestamps:
                     continue
-                stats.append({"start": start_ts, "state": state, "sum": state})
+                stats.append(
+                    {
+                        "start": start_ts,
+                        "state": state,
+                        "sum": state - baseline,
+                    }
+                )
                 # Add to existing set to prevent duplicates within this import session
                 existing_timestamps.add(start_ts)
 

@@ -21,9 +21,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         _LOGGER.warning(f"Performing reset and refresh for {contract}")
 
-        # TODO: Not working - Detected unsafe call not in recorder thread
-        # await clear_stored_data(hass, coordinator)
-        await fetch_historic_data(hass, coordinator)
+        # Clear existing statistics first
+        try:
+            await clear_stored_data(hass, coordinator)
+        except Exception as e:
+            _LOGGER.error(f"Failed to clear statistics for {contract}: {e}")
+
+        # Re-import historical data with corrected sum values
+        try:
+            await fetch_historic_data(hass, coordinator)
+        except Exception as e:
+            _LOGGER.error(f"Failed to fetch historic data for {contract}: {e}")
 
     hass.services.async_register(
         DOMAIN, "reset_and_refresh_data", handle_reset_and_refresh_data
@@ -32,8 +40,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 async def clear_stored_data(hass: HomeAssistant, coordinator) -> None:
+    _LOGGER.info("Clearing stored statistics...")
     await coordinator._clear_statistics()
+    _LOGGER.info("Statistics cleared successfully")
 
 
 async def fetch_historic_data(hass: HomeAssistant, coordinator) -> None:
+    _LOGGER.info("Fetching historic consumption data...")
     await coordinator.import_old_consumptions(days=365)
+    _LOGGER.info("Historic data import completed")
