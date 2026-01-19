@@ -2,28 +2,24 @@
 
 Este `custom_component` permite importar los datos de [Aigües de Barcelona](https://www.aiguesdebarcelona.cat/) en [Home Assistant](https://www.home-assistant.io/).
 
-Puedes ver el 🚰 consumo de agua que has hecho directamente en Home Assistant, y con esa información también puedes crear tus propias automatizaciones y avisos :)
+Puedes ver el consumo de agua que has hecho directamente en Home Assistant, y con esa información también puedes crear tus propias automatizaciones y avisos :)
 
-Si te gusta el proyecto, dale a ⭐ **Star** ! 😊
+Si te gusta el proyecto, dale a **Star** !
 
-## :warning: NOTA: Login con usuario desactivado (CAPTCHA)
+## Requisitos
 
-Inicio del problema: Anterior a `2023-01-23`
-Última actualización: `2024-03-10`
+Esta integración requiere una cuenta de [2Captcha](https://2captcha.com/) para resolver automáticamente el CAPTCHA de inicio de sesión.
 
-La API requiere comprobar la petición de login via CAPTCHA.
-Se puede iniciar sesión pasando un Token OAuth manualmente.
-Busca la 🍪 cookie `ofexTokenJwt` y copia el valor.
-El token dura 1h.
-
-Seguimiento del problema en https://github.com/duhow/hass-aigues-barcelona/issues/5 .
+- Regístrate en [2Captcha](https://2captcha.com/) y obtén tu API Key
+- El coste es mínimo (aproximadamente $0.003 por resolución de CAPTCHA)
+- La integración resuelve el CAPTCHA automáticamente cuando es necesario
 
 ## Uso
 
 Esta integración expone un `sensor` con el último valor disponible de la lectura de agua del día de hoy.
 La lectura que se muestra, puede estar demorada **hasta 4 días o más** (normalmente es 1-2 días).
 
-La información se consulta **cada 4 horas** para no sobresaturar el servicio.
+La información se consulta **cada 8 horas** para no sobresaturar el servicio.
 
 ## Instalación
 
@@ -34,6 +30,21 @@ La información se consulta **cada 4 horas** para no sobresaturar el servicio.
 2. Cuando lo tengas descargado, agrega la integración en Home Assistant.
 
 [![Add Integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start?domain=aigues_barcelona)
+
+3. Durante la configuración, necesitarás proporcionar:
+   - Tu NIF/NIE (usuario de Aigües de Barcelona)
+   - Tu contraseña
+   - Tu API Key de 2Captcha
+
+## Servicios
+
+### `aigues_barcelona.reset_and_refresh_data`
+
+Este servicio permite limpiar las estadísticas almacenadas y volver a importar los datos históricos. Útil si los datos del panel de Energía muestran valores incorrectos.
+
+## Panel de Energía
+
+Esta integración es compatible con el [Panel de Energía](https://www.home-assistant.io/docs/energy/) de Home Assistant. El sensor de agua se puede agregar directamente como fuente de agua.
 
 ## Ayuda
 
@@ -47,4 +58,5 @@ Si encuentras algún error, puedes abrir un Issue.
 
 - [x] Sensor de último consumo disponible
 - [x] Soportar múltiples contratos
-- [x] **BETA** Publicar el consumo en [Energía](https://www.home-assistant.io/docs/energy/)
+- [x] Publicar el consumo en [Energía](https://www.home-assistant.io/docs/energy/)
+- [x] Login automático con 2Captcha
