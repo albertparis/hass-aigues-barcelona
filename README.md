@@ -60,3 +60,7 @@ Si encuentras algún error, puedes abrir un Issue.
 - [x] Soportar múltiples contratos
 - [x] Publicar el consumo en [Energía](https://www.home-assistant.io/docs/energy/)
 - [x] Login automático con 2Captcha
+
+## Agradecimientos
+
+Este proyecto está basado en el excelente trabajo de [rndm2/hass-aigues-barcelona](https://github.com/rndm2/hass-aigues-barcelona), que a su vez es un fork de [duhow/hass-aigues-barcelona](https://github.com/duhow/hass-aigues-barcelona). Gracias a ambos por sentar las bases de esta integración.
