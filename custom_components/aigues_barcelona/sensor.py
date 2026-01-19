@@ -221,7 +221,10 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         except Exception as exp:
             error_str = str(exp)
             # Check if token was invalidated server-side
-            if API_ERROR_TOKEN_INVALID in error_str or API_ERROR_TOKEN_REVOKED in error_str:
+            if (
+                API_ERROR_TOKEN_INVALID in error_str
+                or API_ERROR_TOKEN_REVOKED in error_str
+            ):
                 _LOGGER.warning(
                     "Token rejected by server (%s), attempting re-login for %s",
                     error_str,
@@ -243,9 +246,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     self.async_set_update_error(retry_exp)
                     raise ConfigEntryAuthFailed from retry_exp
             else:
-                _LOGGER.error(
-                    "Error requesting %s data: %s", self.contract, exp
-                )
+                _LOGGER.error("Error requesting %s data: %s", self.contract, exp)
                 self.async_set_update_error(exp)
 
         if not consumptions:
