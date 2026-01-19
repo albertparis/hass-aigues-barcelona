@@ -206,9 +206,17 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             return
 
         consumptions = None
+
+        # Step 1: Ensure we have a valid token
         try:
             await self._ensure_token()
+        except Exception as exp:
+            _LOGGER.error("Failed to ensure valid token for %s: %s", self.contract, exp)
+            self.async_set_update_error(exp)
+            return False
 
+        # Step 2: Fetch consumption data
+        try:
             consumptions = await self.hass.async_add_executor_job(
                 self._api.consumptions,
                 LAST_WEEK,
