@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.5.1] - 2026-01-19
+## [0.5.1]
 
 ### Added
 - Automatic login with 2Captcha integration - no more manual token copying
@@ -24,7 +24,7 @@ All notable changes to this project will be documented in this file.
 - Separated token refresh errors from consumption request errors in logs
 - Duplicate statistics import prevention
 
-## [0.5.0] - Initial 2Captcha Fork
+## [0.5.0]
 
 ### Added
 - 2Captcha integration for automatic CAPTCHA solving during login
