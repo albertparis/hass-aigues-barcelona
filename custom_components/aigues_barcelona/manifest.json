@@ -1,18 +1,18 @@
 {
   "domain": "aigues_barcelona",
-  "name": "Aigues de Barcelona",
+  "name": "Aigües de Barcelona (2Captcha)",
   "codeowners": [
-    "@duhow"
+    "@albertparis"
   ],
   "config_flow": true,
   "dependencies": [
     "http",
     "recorder"
   ],
-  "documentation": "https://github.com/duhow/hass-aigues-barcelona/tree/master",
+  "documentation": "https://github.com/albertparis/hass-aigues-barcelona/tree/master",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/duhow/hass-aigues-barcelona/issues",
+  "issue_tracker": "https://github.com/albertparis/hass-aigues-barcelona/issues",
   "requirements": [
     "2captcha-python"
   ],
