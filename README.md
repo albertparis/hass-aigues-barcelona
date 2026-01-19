@@ -25,7 +25,7 @@ La información se consulta **cada 8 horas** para no sobresaturar el servicio.
 
 1. Via [HACS](https://hacs.xyz/), busca e instala este componente personalizado.
 
-[![Install repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=albertparis&repository=hass-aigues-barcelona&category=integration)
+[![Install repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=albertparis&repository=hass-aigues-barcelona-2captcha&category=integration)
 
 2. Cuando lo tengas descargado, agrega la integración en Home Assistant.
 

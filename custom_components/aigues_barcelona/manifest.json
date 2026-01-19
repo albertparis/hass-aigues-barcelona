@@ -9,10 +9,10 @@
     "http",
     "recorder"
   ],
-  "documentation": "https://github.com/albertparis/hass-aigues-barcelona/tree/master",
+  "documentation": "https://github.com/albertparis/hass-aigues-barcelona-2captcha/tree/master",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/albertparis/hass-aigues-barcelona/issues",
+  "issue_tracker": "https://github.com/albertparis/hass-aigues-barcelona-2captcha/issues",
   "requirements": [
     "2captcha-python"
   ],
