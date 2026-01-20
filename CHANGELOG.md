@@ -13,7 +13,6 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Renamed project to "Aigües de Barcelona (2Captcha)" to reflect 2Captcha integration
-- Default scan period changed from 4 hours to 8 hours to reduce API load
 - Repository ownership transferred to @albertparis
 
 ### Fixed

@@ -8,7 +8,7 @@ CONF_2CAPTCHA_APIKEY = "twocaptcha_api_key"
 
 ATTR_LAST_MEASURE = "Last measure"
 
-DEFAULT_SCAN_PERIOD = 28800  # 8 hours
+DEFAULT_SCAN_PERIOD = 14400  # 4 hours
 
 API_HOST = "api.aiguesdebarcelona.cat"
 API_COOKIE_TOKEN = "ofexTokenJwt"
