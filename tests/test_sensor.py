@@ -640,7 +640,8 @@ class TestSumCalculation:
         # Sum increased correctly, no negative consumption
 
     def test_sum_always_increases_with_new_data(self):
-        """Test that sum always increases when importing chronologically new data."""
+        """Test that sum always increases when importing chronologically new
+        data."""
         # Since accumulatedConsumption is a meter reading that always increases,
         # and we only import data newer than the last statistic,
         # the sum should always increase (or stay same if no consumption).

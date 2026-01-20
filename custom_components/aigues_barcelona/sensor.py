@@ -319,24 +319,21 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     meta_ids = [row[0] for row in meta_ids]
 
                     if meta_ids:
-                        # Delete from statistics table
+                        # Delete from statistics table (long-term)
                         session.execute(
                             delete(Statistics).where(
                                 Statistics.metadata_id.in_(meta_ids)
                             )
                         )
-                        # Delete from statistics_short_term table
+                        # Delete from statistics_short_term table (5-minute data)
                         session.execute(
                             delete(StatisticsShortTerm).where(
                                 StatisticsShortTerm.metadata_id.in_(meta_ids)
                             )
                         )
-                        # Delete metadata
-                        session.execute(
-                            delete(StatisticsMeta).where(
-                                StatisticsMeta.id.in_(meta_ids)
-                            )
-                        )
+                        # Note: We do NOT delete StatisticsMeta - it must remain
+                        # so that new statistics can reference the same metadata_id.
+                        # The metadata will be reused when importing new statistics.
                         session.commit()
 
             await recorder.async_add_executor_job(_delete_stats, recorder, to_clear)
