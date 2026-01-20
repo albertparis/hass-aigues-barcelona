@@ -285,8 +285,10 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             _LOGGER.warning(
                 f"About to delete {len(to_clear)} statistics entries for {self.contract}"
             )
-            # clear_statistics expects (hass, statistic_ids)
-            clear_statistics(self.hass, to_clear)
+            # clear_statistics must run in the executor job
+            await get_db_instance(self.hass).async_add_executor_job(
+                clear_statistics, self.hass, to_clear
+            )
             _LOGGER.info(f"Cleared statistics for {self.contract}")
 
     async def get_last_measurement_stored(self) -> Optional[datetime]:
