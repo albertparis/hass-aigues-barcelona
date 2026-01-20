@@ -414,9 +414,10 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
     ) -> Optional[Tuple[datetime, float, float]]:
         """Query the last existing statistic from the database.
 
-        Returns a tuple of (timestamp, state, sum) for the most recent statistic,
-        or None if no statistics exist. This is used to ensure new
-        statistics continue correctly from where existing ones left off.
+        Returns a tuple of (timestamp, state, sum) for the most recent
+        statistic, or None if no statistics exist. This is used to
+        ensure new statistics continue correctly from where existing
+        ones left off.
         """
         try:
             start_time = dt_util.utcnow() - timedelta(days=lookback_days)

@@ -584,9 +584,10 @@ class TestSumCalculation:
     def test_sum_calculation_prevents_negative_values(self):
         """Test that skipping old data prevents negative sum values.
 
-        This is the key fix for the Energy Dashboard negative values issue.
-        Without skipping old data, importing older data points would result
-        in negative sums because new_state < last_existing_state.
+        This is the key fix for the Energy Dashboard negative values
+        issue. Without skipping old data, importing older data points
+        would result in negative sums because new_state <
+        last_existing_state.
         """
         # Existing statistic at 12:00 with state=101.0, sum=6.0
         last_existing_ts = datetime(2026, 1, 15, 12, 0, 0)
