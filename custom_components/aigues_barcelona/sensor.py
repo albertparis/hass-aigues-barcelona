@@ -411,10 +411,10 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
     async def _get_last_existing_statistic(
         self, lookback_days: int = 30
-    ) -> Optional[Tuple[float, float]]:
+    ) -> Optional[Tuple[datetime, float, float]]:
         """Query the last existing statistic from the database.
 
-        Returns a tuple of (state, sum) for the most recent statistic,
+        Returns a tuple of (timestamp, state, sum) for the most recent statistic,
         or None if no statistics exist. This is used to ensure new
         statistics continue correctly from where existing ones left off.
         """
@@ -436,17 +436,26 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 if stats_list:
                     # Get the most recent statistic (last in the sorted list)
                     last_stat = stats_list[-1]
+                    last_ts = last_stat.get("start")
                     last_state = last_stat.get("state")
                     last_sum = last_stat.get("sum")
 
-                    if last_state is not None and last_sum is not None:
+                    if (
+                        last_ts is not None
+                        and last_state is not None
+                        and last_sum is not None
+                    ):
+                        # Convert timestamp to datetime if needed
+                        if isinstance(last_ts, (int, float)):
+                            last_ts = dt_util.utc_from_timestamp(last_ts)
                         _LOGGER.debug(
-                            "Found last statistic for %s: state=%.4f, sum=%.4f",
+                            "Found last statistic for %s: ts=%s, state=%.4f, sum=%.4f",
                             self.contract,
+                            last_ts,
                             last_state,
                             last_sum,
                         )
-                        return (last_state, last_sum)
+                        return (last_ts, last_state, last_sum)
         except Exception as e:
             _LOGGER.warning(
                 "Failed to query last statistic for %s: %s",
@@ -521,11 +530,17 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             # Query the last existing statistic to ensure continuity
             last_existing = await self._get_last_existing_statistic(lookback_days=30)
 
+            # Variables for baseline calculation
+            last_existing_ts: Optional[datetime] = None
+            last_existing_state: float
+            last_existing_sum: float
+
             if last_existing:
                 # Continue from existing statistics
-                last_existing_state, last_existing_sum = last_existing
+                last_existing_ts, last_existing_state, last_existing_sum = last_existing
                 _LOGGER.debug(
-                    "Continuing from last statistic: state=%.4f, sum=%.4f",
+                    "Continuing from last statistic: ts=%s, state=%.4f, sum=%.4f",
+                    last_existing_ts,
                     last_existing_state,
                     last_existing_sum,
                 )
@@ -541,10 +556,15 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             # Track the most recent data point for fill_to_now (before filtering)
             most_recent_ts, most_recent_state = items[-1]
 
-            # Build stats list, filtering out duplicates
+            # Build stats list, filtering out duplicates and data older than last statistic
             stats = []
             for start_ts, state in items:
+                # Skip if this timestamp already has a statistic
                 if start_ts in existing_timestamps:
+                    continue
+                # Skip if this data is older than or equal to the last existing statistic
+                # This prevents negative sums from re-importing old data
+                if last_existing_ts is not None and start_ts <= last_existing_ts:
                     continue
                 # Calculate sum relative to the last existing statistic
                 # new_sum = last_existing_sum + (new_state - last_existing_state)
@@ -636,7 +656,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         consumptions,
         existing_timestamps: Set[datetime],
         fill_to_now: bool = False,
-        last_existing: Optional[Tuple[float, float]] = None,
+        last_existing: Optional[Tuple[datetime, float, float]] = None,
     ) -> None:
         """Import statistics using pre-fetched existing timestamps.
 
@@ -647,8 +667,8 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             consumptions: Raw consumption data to import.
             existing_timestamps: Pre-fetched set of existing statistic timestamps.
             fill_to_now: Whether to fill gaps up to current time.
-            last_existing: Optional tuple of (last_state, last_sum) from the
-                          most recent existing statistic. If not provided,
+            last_existing: Optional tuple of (timestamp, last_state, last_sum) from
+                          the most recent existing statistic. If not provided,
                           will be queried from the database.
         """
         if self._import_in_progress:
@@ -667,18 +687,26 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     lookback_days=30
                 )
 
+            # Variables for baseline calculation
+            last_existing_ts: Optional[datetime] = None
+            last_existing_state: float
+            last_existing_sum: float
+
             if last_existing:
                 # Continue from existing statistics
-                last_existing_state, last_existing_sum = last_existing
+                last_existing_ts, last_existing_state, last_existing_sum = last_existing
             else:
                 # No existing statistics - use first reading as baseline
                 last_existing_state = items[0][1]
                 last_existing_sum = 0.0
 
-            # Build stats list, filtering out duplicates
+            # Build stats list, filtering out duplicates and old data
             stats = []
             for start_ts, state in items:
                 if start_ts in existing_timestamps:
+                    continue
+                # Skip data older than or equal to the last existing statistic
+                if last_existing_ts is not None and start_ts <= last_existing_ts:
                     continue
                 # Calculate sum relative to the last existing statistic
                 new_sum = last_existing_sum + (state - last_existing_state)
