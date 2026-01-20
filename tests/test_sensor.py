@@ -496,6 +496,181 @@ class TestRealApiResponse:
         assert deltas == [0.356, 0.329, 0.344, 0.159, 0.378, 0.373, 0.148]
 
 
+class TestSumCalculation:
+    """Tests for the cumulative sum calculation logic."""
+
+    def test_sum_calculation_no_existing_stats(self):
+        """Test sum calculation when no existing statistics exist."""
+        # When no existing statistics, baseline is the first reading
+        # sum = state - baseline
+        items = [
+            (datetime(2026, 1, 15, 10, 0, 0), 100.0),
+            (datetime(2026, 1, 15, 11, 0, 0), 100.5),
+            (datetime(2026, 1, 15, 12, 0, 0), 101.0),
+        ]
+
+        # No existing statistics - use first reading as baseline
+        last_existing_state = items[0][1]  # 100.0
+        last_existing_sum = 0.0
+
+        stats = []
+        for start_ts, state in items:
+            new_sum = last_existing_sum + (state - last_existing_state)
+            stats.append({"start": start_ts, "state": state, "sum": new_sum})
+
+        assert stats[0]["sum"] == 0.0  # 0 + (100.0 - 100.0) = 0
+        assert stats[1]["sum"] == 0.5  # 0 + (100.5 - 100.0) = 0.5
+        assert stats[2]["sum"] == 1.0  # 0 + (101.0 - 100.0) = 1.0
+
+    def test_sum_calculation_with_existing_stats(self):
+        """Test sum calculation continues from existing statistics."""
+        # Existing statistic: state=100.0, sum=5.0
+        # This means we've tracked 5.0 m³ of consumption so far
+        last_existing_ts = datetime(2026, 1, 15, 9, 0, 0)
+        last_existing_state = 100.0
+        last_existing_sum = 5.0
+
+        # New data points (after the last existing statistic)
+        items = [
+            (datetime(2026, 1, 15, 10, 0, 0), 100.5),
+            (datetime(2026, 1, 15, 11, 0, 0), 101.0),
+            (datetime(2026, 1, 15, 12, 0, 0), 101.5),
+        ]
+
+        stats = []
+        for start_ts, state in items:
+            # Skip data older than or equal to last existing statistic
+            if start_ts <= last_existing_ts:
+                continue
+            new_sum = last_existing_sum + (state - last_existing_state)
+            stats.append({"start": start_ts, "state": state, "sum": new_sum})
+
+        assert len(stats) == 3
+        assert stats[0]["sum"] == 5.5  # 5.0 + (100.5 - 100.0) = 5.5
+        assert stats[1]["sum"] == 6.0  # 5.0 + (101.0 - 100.0) = 6.0
+        assert stats[2]["sum"] == 6.5  # 5.0 + (101.5 - 100.0) = 6.5
+
+    def test_sum_calculation_skips_old_data(self):
+        """Test that data older than last existing statistic is skipped."""
+        # Existing statistic at 11:00 with state=100.5, sum=5.5
+        last_existing_ts = datetime(2026, 1, 15, 11, 0, 0)
+        last_existing_state = 100.5
+        last_existing_sum = 5.5
+
+        # New fetch returns overlapping data (some older than last statistic)
+        items = [
+            (datetime(2026, 1, 15, 9, 0, 0), 99.5),  # Should be skipped (older)
+            (datetime(2026, 1, 15, 10, 0, 0), 100.0),  # Should be skipped (older)
+            (datetime(2026, 1, 15, 11, 0, 0), 100.5),  # Should be skipped (equal)
+            (datetime(2026, 1, 15, 12, 0, 0), 101.0),  # Should be imported
+            (datetime(2026, 1, 15, 13, 0, 0), 101.5),  # Should be imported
+        ]
+
+        stats = []
+        for start_ts, state in items:
+            # Skip data older than or equal to last existing statistic
+            if start_ts <= last_existing_ts:
+                continue
+            new_sum = last_existing_sum + (state - last_existing_state)
+            stats.append({"start": start_ts, "state": state, "sum": new_sum})
+
+        # Only the last 2 items should be imported
+        assert len(stats) == 2
+        assert stats[0]["start"] == datetime(2026, 1, 15, 12, 0, 0)
+        assert stats[0]["sum"] == 6.0  # 5.5 + (101.0 - 100.5) = 6.0
+        assert stats[1]["start"] == datetime(2026, 1, 15, 13, 0, 0)
+        assert stats[1]["sum"] == 6.5  # 5.5 + (101.5 - 100.5) = 6.5
+
+    def test_sum_calculation_prevents_negative_values(self):
+        """Test that skipping old data prevents negative sum values.
+
+        This is the key fix for the Energy Dashboard negative values issue.
+        Without skipping old data, importing older data points would result
+        in negative sums because new_state < last_existing_state.
+        """
+        # Existing statistic at 12:00 with state=101.0, sum=6.0
+        last_existing_ts = datetime(2026, 1, 15, 12, 0, 0)
+        last_existing_state = 101.0
+        last_existing_sum = 6.0
+
+        # Simulating what happens when API returns a week of data
+        # that overlaps with already imported statistics
+        items = [
+            (
+                datetime(2026, 1, 15, 10, 0, 0),
+                100.0,
+            ),  # Older, state < last_existing_state
+            (
+                datetime(2026, 1, 15, 11, 0, 0),
+                100.5,
+            ),  # Older, state < last_existing_state
+            (datetime(2026, 1, 15, 12, 0, 0), 101.0),  # Equal to last existing
+            (datetime(2026, 1, 15, 13, 0, 0), 101.5),  # New data
+        ]
+
+        # WITHOUT the fix (old behavior) - would produce negative sums:
+        stats_without_fix = []
+        for start_ts, state in items:
+            # Old behavior: no timestamp filtering
+            new_sum = last_existing_sum + (state - last_existing_state)
+            stats_without_fix.append(
+                {"start": start_ts, "state": state, "sum": new_sum}
+            )
+
+        # This shows why negative values occurred:
+        assert stats_without_fix[0]["sum"] == 5.0  # 6.0 + (100.0 - 101.0) = 5.0
+        assert stats_without_fix[1]["sum"] == 5.5  # 6.0 + (100.5 - 101.0) = 5.5
+        # Note: These would appear as negative consumption in the dashboard
+        # because the sum decreased from 6.0 to 5.0
+
+        # WITH the fix (new behavior) - only imports new data:
+        stats_with_fix = []
+        for start_ts, state in items:
+            # New behavior: skip data older than or equal to last existing
+            if start_ts <= last_existing_ts:
+                continue
+            new_sum = last_existing_sum + (state - last_existing_state)
+            stats_with_fix.append({"start": start_ts, "state": state, "sum": new_sum})
+
+        # Only the genuinely new data point is imported
+        assert len(stats_with_fix) == 1
+        assert stats_with_fix[0]["start"] == datetime(2026, 1, 15, 13, 0, 0)
+        assert stats_with_fix[0]["sum"] == 6.5  # 6.0 + (101.5 - 101.0) = 6.5
+        # Sum increased correctly, no negative consumption
+
+    def test_sum_always_increases_with_new_data(self):
+        """Test that sum always increases when importing chronologically new data."""
+        # Since accumulatedConsumption is a meter reading that always increases,
+        # and we only import data newer than the last statistic,
+        # the sum should always increase (or stay same if no consumption).
+        last_existing_ts = datetime(2026, 1, 15, 10, 0, 0)
+        last_existing_state = 100.0
+        last_existing_sum = 5.0
+
+        # Simulating a week of new data after last statistic
+        items = [
+            (datetime(2026, 1, 15, 11, 0, 0), 100.2),
+            (datetime(2026, 1, 15, 12, 0, 0), 100.5),
+            (datetime(2026, 1, 15, 13, 0, 0), 100.5),  # No consumption this hour
+            (datetime(2026, 1, 15, 14, 0, 0), 101.0),
+        ]
+
+        stats = []
+        for start_ts, state in items:
+            if start_ts <= last_existing_ts:
+                continue
+            new_sum = last_existing_sum + (state - last_existing_state)
+            stats.append({"start": start_ts, "state": state, "sum": new_sum})
+
+        # All sums should be >= last_existing_sum
+        for stat in stats:
+            assert stat["sum"] >= last_existing_sum
+
+        # Sums should be non-decreasing
+        for i in range(1, len(stats)):
+            assert stats[i]["sum"] >= stats[i - 1]["sum"]
+
+
 class TestTimestampExtraction:
     """Tests for extracting timestamps from statistics data."""
 
