@@ -8,7 +8,6 @@ from datetime import timedelta
 import homeassistant.components.recorder.util as recorder_util
 
 from homeassistant.components.recorder.statistics import async_import_statistics
-from homeassistant.components.recorder.statistics import clear_statistics
 from homeassistant.components.recorder.statistics import list_statistic_ids
 from homeassistant.components.recorder.statistics import statistics_during_period
 
@@ -272,9 +271,8 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         return True
 
     async def _clear_statistics(self) -> None:
-        all_ids = await get_db_instance(self.hass).async_add_executor_job(
-            list_statistic_ids, self.hass
-        )
+        recorder = get_db_instance(self.hass)
+        all_ids = await recorder.async_add_executor_job(list_statistic_ids, self.hass)
         to_clear = [
             x["statistic_id"]
             for x in all_ids
@@ -285,10 +283,63 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             _LOGGER.warning(
                 f"About to delete {len(to_clear)} statistics entries for {self.contract}"
             )
-            # clear_statistics must run in the executor job
-            await get_db_instance(self.hass).async_add_executor_job(
-                clear_statistics, self.hass, to_clear
-            )
+
+            # Use recorder's session directly to delete statistics
+            # This avoids the get_session() issue with clear_statistics
+            def _delete_stats(recorder_instance, statistic_ids):
+                try:
+                    from homeassistant.components.recorder.db_schema import (
+                        Statistics,
+                        StatisticsShortTerm,
+                        StatisticsMeta,
+                    )
+                except ImportError:
+                    # Fallback for different HA versions
+                    try:
+                        from homeassistant.components.recorder.models.db_schema import (
+                            Statistics,
+                            StatisticsShortTerm,
+                            StatisticsMeta,
+                        )
+                    except ImportError:
+                        _LOGGER.error(
+                            "Could not import database schema models for statistics deletion"
+                        )
+                        return
+
+                from sqlalchemy import delete
+
+                with recorder_instance.get_session() as session:
+                    # Get metadata IDs for the statistic IDs
+                    meta_ids = (
+                        session.query(StatisticsMeta.id)
+                        .filter(StatisticsMeta.statistic_id.in_(statistic_ids))
+                        .all()
+                    )
+                    meta_ids = [row[0] for row in meta_ids]
+
+                    if meta_ids:
+                        # Delete from statistics table
+                        session.execute(
+                            delete(Statistics).where(
+                                Statistics.metadata_id.in_(meta_ids)
+                            )
+                        )
+                        # Delete from statistics_short_term table
+                        session.execute(
+                            delete(StatisticsShortTerm).where(
+                                StatisticsShortTerm.metadata_id.in_(meta_ids)
+                            )
+                        )
+                        # Delete metadata
+                        session.execute(
+                            delete(StatisticsMeta).where(
+                                StatisticsMeta.id.in_(meta_ids)
+                            )
+                        )
+                        session.commit()
+
+            await recorder.async_add_executor_job(_delete_stats, recorder, to_clear)
             _LOGGER.info(f"Cleared statistics for {self.contract}")
 
     async def get_last_measurement_stored(self) -> Optional[datetime]:
