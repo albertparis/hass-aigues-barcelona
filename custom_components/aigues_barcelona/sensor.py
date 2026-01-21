@@ -610,11 +610,11 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         await self._clear_statistics()
 
     async def import_old_consumptions(self, days: int = 365) -> None:
-        """Import historical consumption data.
+        """Import historical consumption data with HOURLY granularity.
 
         Fetches consumption data week by week going back the specified
-        number of days. Uses a larger lookback window for duplicate
-        checking since we're importing historical data.
+        number of days, using HOURLY frequency to get proper hourly data
+        for the Energy Dashboard.
 
         For historical imports, we use the first reading as the baseline
         and build cumulative sums from there, ensuring continuity across
@@ -636,9 +636,17 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
         current_date = start_date
         imported_count = 0
+        total_points = 0
         while current_date < today:
+            # Calculate week boundaries
+            week_end = min(current_date + timedelta(days=7), today)
+
+            # Fetch HOURLY data for this week (not daily)
             consumptions = await self.hass.async_add_executor_job(
-                self._api.consumptions_week, current_date, self.contract
+                self._api.consumptions,
+                current_date,
+                week_end,
+                self.contract,
             )
 
             if consumptions:
@@ -647,10 +655,11 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     # Initialize baseline from the very first data point
                     if baseline_state is None:
                         baseline_state = items[0][1]
-                        _LOGGER.debug(
-                            "Historical import baseline for %s: %.4f",
+                        _LOGGER.info(
+                            "Historical import baseline for %s: %.4f (from %s)",
                             self.contract,
                             baseline_state,
+                            items[0][0],
                         )
 
                     # Build stats for this week
@@ -674,20 +683,22 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                             self.hass, self._get_statistics_metadata(), stats
                         )
                         _LOGGER.debug(
-                            "Imported %d historical points for %s (week of %s)",
+                            "Imported %d hourly points for %s (week of %s)",
                             len(stats),
                             self.contract,
                             current_date,
                         )
                         imported_count += 1
+                        total_points += len(stats)
             else:
                 _LOGGER.debug("No data available for week of %s", current_date)
 
             current_date += timedelta(weeks=1)
 
         _LOGGER.info(
-            "Completed importing %d weeks of historical data for %s",
+            "Completed importing %d weeks (%d hourly points) of historical data for %s",
             imported_count,
+            total_points,
             self.contract,
         )
 
