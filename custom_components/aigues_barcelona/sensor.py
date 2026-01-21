@@ -615,6 +615,10 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         Fetches consumption data week by week going back the specified
         number of days. Uses a larger lookback window for duplicate
         checking since we're importing historical data.
+
+        For historical imports, we use the first reading as the baseline
+        and build cumulative sums from there, ensuring continuity across
+        all weeks.
         """
         today = datetime.now()
         start_date = today - timedelta(days=days)
@@ -626,6 +630,10 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             lookback_days=days + 7
         )
 
+        # For historical imports, we need to establish a baseline from the
+        # first data point and maintain it across all weeks
+        baseline_state: Optional[float] = None
+
         current_date = start_date
         imported_count = 0
         while current_date < today:
@@ -634,10 +642,44 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             )
 
             if consumptions:
-                await self._async_import_statistics_with_existing(
-                    consumptions, existing_timestamps, fill_to_now=False
-                )
-                imported_count += 1
+                items = self._normalize_consumptions(consumptions)
+                if items:
+                    # Initialize baseline from the very first data point
+                    if baseline_state is None:
+                        baseline_state = items[0][1]
+                        _LOGGER.debug(
+                            "Historical import baseline for %s: %.4f",
+                            self.contract,
+                            baseline_state,
+                        )
+
+                    # Build stats for this week
+                    stats = []
+                    for start_ts, state in items:
+                        if start_ts in existing_timestamps:
+                            continue
+                        # Calculate sum from baseline (first reading ever)
+                        new_sum = state - baseline_state
+                        stats.append(
+                            {
+                                "start": start_ts,
+                                "state": state,
+                                "sum": new_sum,
+                            }
+                        )
+                        existing_timestamps.add(start_ts)
+
+                    if stats:
+                        async_import_statistics(
+                            self.hass, self._get_statistics_metadata(), stats
+                        )
+                        _LOGGER.debug(
+                            "Imported %d historical points for %s (week of %s)",
+                            len(stats),
+                            self.contract,
+                            current_date,
+                        )
+                        imported_count += 1
             else:
                 _LOGGER.debug("No data available for week of %s", current_date)
 

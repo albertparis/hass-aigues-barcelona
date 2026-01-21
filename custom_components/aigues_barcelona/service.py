@@ -49,3 +49,8 @@ async def fetch_historic_data(hass: HomeAssistant, coordinator) -> None:
     _LOGGER.info("Fetching historic consumption data...")
     await coordinator.import_old_consumptions(days=365)
     _LOGGER.info("Historic data import completed")
+
+    # Also trigger a normal update to get the latest data
+    _LOGGER.info("Fetching current data...")
+    await coordinator.async_refresh()
+    _LOGGER.info("Current data refresh completed")
