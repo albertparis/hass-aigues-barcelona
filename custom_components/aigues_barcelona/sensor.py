@@ -266,9 +266,9 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
         # await self._clear_statistics()
         try:
-            # Use fill_to_now=False to avoid importing recent data that conflicts
-            # with HA's recorder. We only import data older than 2 hours.
-            await self._async_import_statistics(consumptions, fill_to_now=False)
+            # Use fill_to_now=True to fill statistics up to current hour
+            # This ensures HA recorder finds existing stats and doesn't add conflicting ones
+            await self._async_import_statistics(consumptions, fill_to_now=True)
         except Exception:
             _LOGGER.exception("Failed to import statistics")
 
@@ -660,16 +660,10 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             # Track the most recent data point for fill_to_now (before filtering)
             most_recent_ts, most_recent_state = items[-1]
 
-            # Calculate cutoff time: don't import statistics for the last 2 hours
-            # This prevents conflicts with HA's recorder which compiles stats hourly
-            now_utc = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
-            cutoff_ts = now_utc - timedelta(hours=2)
-
             # Build stats list, filtering out duplicates and data older than last statistic
             stats = []
             skipped_existing = 0
             skipped_old = 0
-            skipped_recent = 0
             for start_ts, state in items:
                 # Skip if this timestamp already has a statistic
                 if start_ts in existing_timestamps:
@@ -679,10 +673,6 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 # This prevents re-importing old data
                 if last_existing_ts is not None and start_ts <= last_existing_ts:
                     skipped_old += 1
-                    continue
-                # Skip data from the last 2 hours to avoid conflicts with HA recorder
-                if start_ts > cutoff_ts:
-                    skipped_recent += 1
                     continue
                 # Calculate sum using the baseline (consistent with historical import)
                 # sum = current_state - baseline_state
@@ -697,20 +687,19 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
             _LOGGER.debug(
                 "Stats build for %s: %d to import, %d skipped (existing), "
-                "%d skipped (old), %d skipped (recent <2h), baseline=%.4f",
+                "%d skipped (old), baseline=%.4f",
                 self.contract,
                 len(stats),
                 skipped_existing,
                 skipped_old,
-                skipped_recent,
                 baseline_state,
             )
 
-            # Note: fill_to_now is disabled to avoid conflicts with HA recorder
-            # We only import historical data (older than 2 hours)
+            # Fill gaps up to current hour so HA recorder finds existing stats
             if fill_to_now:
-                # Fill gaps but only up to cutoff time (2 hours ago)
-                max_fill_ts = cutoff_ts
+                now_utc = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
+                # Fill up to current hour (inclusive)
+                max_fill_ts = now_utc
                 fill_ts = most_recent_ts + timedelta(hours=1)
 
                 while fill_ts <= max_fill_ts:
@@ -724,6 +713,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                                 "sum": fill_sum,
                             }
                         )
+                        existing_timestamps.add(fill_ts)  # Prevent duplicates
                     fill_ts += timedelta(hours=1)
 
             if stats:
