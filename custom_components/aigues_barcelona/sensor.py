@@ -117,9 +117,14 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
         self._import_in_progress = False
 
+        # Baseline state from the first reading ever - used to ensure
+        # consistent sum calculations across historical and regular imports
+        self._baseline_state: Optional[float] = None
+
         self.contract = contract.upper()
         self.id = contract.lower()
-        self.internal_sensor_id = f"sensor.contador_{self.id}"
+        # Use sensor entity ID format for statistics (required for Energy Dashboard)
+        self.statistic_id = f"sensor.contador_{self.id}"
         self.entry_id = entry_id
 
         if not hass.data[DOMAIN].get(self.contract):
@@ -261,6 +266,8 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
         # await self._clear_statistics()
         try:
+            # Use fill_to_now=False to avoid importing recent data that conflicts
+            # with HA's recorder. We only import data older than 2 hours.
             await self._async_import_statistics(consumptions, fill_to_now=False)
         except Exception:
             _LOGGER.exception("Failed to import statistics")
@@ -274,9 +281,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         recorder = get_db_instance(self.hass)
         all_ids = await recorder.async_add_executor_job(list_statistic_ids, self.hass)
         to_clear = [
-            x["statistic_id"]
-            for x in all_ids
-            if x["statistic_id"].startswith(self.internal_sensor_id)
+            x["statistic_id"] for x in all_ids if x["statistic_id"] == self.statistic_id
         ]
 
         if to_clear:
@@ -378,14 +383,14 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 self.hass,
                 start_time,
                 None,
-                {self.internal_sensor_id},
+                {self.statistic_id},
                 "hour",
                 None,  # units
                 {"sum"},
             )
 
-            if existing_stats and self.internal_sensor_id in existing_stats:
-                for stat in existing_stats[self.internal_sensor_id]:
+            if existing_stats and self.statistic_id in existing_stats:
+                for stat in existing_stats[self.statistic_id]:
                     if stat.get("start_ts") is not None:
                         existing_ts = dt_util.utc_from_timestamp(stat["start_ts"])
                         existing_ts = existing_ts.replace(
@@ -423,14 +428,14 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 self.hass,
                 start_time,
                 None,
-                {self.internal_sensor_id},
+                {self.statistic_id},
                 "hour",
                 None,  # units
                 {"state", "sum"},
             )
 
-            if existing_stats and self.internal_sensor_id in existing_stats:
-                stats_list = existing_stats[self.internal_sensor_id]
+            if existing_stats and self.statistic_id in existing_stats:
+                stats_list = existing_stats[self.statistic_id]
                 if stats_list:
                     # Get the most recent statistic (last in the sorted list)
                     last_stat = stats_list[-1]
@@ -457,6 +462,63 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         except Exception as e:
             _LOGGER.warning(
                 "Failed to query last statistic for %s: %s",
+                self.contract,
+                e,
+            )
+        return None
+
+    async def _get_baseline_from_statistics(
+        self, lookback_days: int = 400
+    ) -> Optional[float]:
+        """Query the baseline (first state value) from existing statistics.
+
+        Returns the state value from the oldest statistic in the
+        database, which represents the baseline used for sum
+        calculations. This ensures regular updates use the same baseline
+        as historical imports.
+        """
+        try:
+            start_time = dt_util.utcnow() - timedelta(days=lookback_days)
+            existing_stats = await get_db_instance(self.hass).async_add_executor_job(
+                statistics_during_period,
+                self.hass,
+                start_time,
+                None,
+                {self.statistic_id},
+                "hour",
+                None,  # units
+                {"state"},
+            )
+
+            if existing_stats and self.statistic_id in existing_stats:
+                stats_list = existing_stats[self.statistic_id]
+                if stats_list:
+                    # Find the oldest statistic by timestamp
+                    # (don't assume the list is sorted)
+                    oldest_stat = min(stats_list, key=lambda s: s.get("start", 0))
+                    oldest_state = oldest_stat.get("state")
+
+                    _LOGGER.info(
+                        "Baseline query for %s: found %d stats, oldest at %s "
+                        "with state=%.4f",
+                        self.contract,
+                        len(stats_list),
+                        oldest_stat.get("start"),
+                        oldest_state if oldest_state else 0,
+                    )
+
+                    if oldest_state is not None:
+                        return oldest_state
+            else:
+                _LOGGER.warning(
+                    "No statistics found for %s when querying baseline "
+                    "(lookback=%d days)",
+                    self.contract,
+                    lookback_days,
+                )
+        except Exception as e:
+            _LOGGER.warning(
+                "Failed to query baseline for %s: %s",
                 self.contract,
                 e,
             )
@@ -500,7 +562,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             "has_sum": True,
             "name": f"Contador {self.id}",
             "source": "recorder",
-            "statistic_id": self.internal_sensor_id,
+            "statistic_id": self.statistic_id,
             "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
             "unit_class": "volume",  # Required from HA 2026.11
         }
@@ -515,9 +577,19 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             return
 
         self._import_in_progress = True
+        _LOGGER.debug(
+            "Starting _async_import_statistics for %s with %d consumptions",
+            self.contract,
+            len(consumptions) if consumptions else 0,
+        )
         try:
             # Query existing statistics to avoid duplicates
             existing_timestamps = await self._get_existing_statistics(lookback_days=7)
+            _LOGGER.debug(
+                "Found %d existing timestamps for %s",
+                len(existing_timestamps),
+                self.contract,
+            )
 
             # Normalize to hourly buckets
             items = self._normalize_consumptions(consumptions)
@@ -525,48 +597,96 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 _LOGGER.debug("No valid consumptions to process for %s", self.contract)
                 return
 
-            # Query the last existing statistic to ensure continuity
+            _LOGGER.debug(
+                "Normalized to %d hourly items for %s (first: %s, last: %s)",
+                len(items),
+                self.contract,
+                items[0] if items else None,
+                items[-1] if items else None,
+            )
+
+            # Get the baseline state (first reading ever) for consistent sum calculation
+            # This ensures regular updates use the same baseline as historical imports
+            baseline_state = self._baseline_state
+            _LOGGER.debug(
+                "Current _baseline_state for %s: %s",
+                self.contract,
+                baseline_state,
+            )
+            if baseline_state is None:
+                baseline_state = await self._get_baseline_from_statistics(
+                    lookback_days=400
+                )
+                if baseline_state is not None:
+                    self._baseline_state = baseline_state
+                    _LOGGER.info(
+                        "Loaded baseline from statistics for %s: %.4f",
+                        self.contract,
+                        baseline_state,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Could not load baseline from statistics for %s",
+                        self.contract,
+                    )
+
+            # If no baseline exists (first time setup), use first reading
+            if baseline_state is None:
+                baseline_state = items[0][1]
+                self._baseline_state = baseline_state
+                _LOGGER.warning(
+                    "No baseline found, using first reading for %s: %.4f "
+                    "(this may cause negative values!)",
+                    self.contract,
+                    baseline_state,
+                )
+
+            # Query the last existing statistic to know which timestamps to skip
             last_existing = await self._get_last_existing_statistic(lookback_days=30)
-
-            # Variables for baseline calculation
             last_existing_ts: Optional[datetime] = None
-            last_existing_state: float
-            last_existing_sum: float
-
             if last_existing:
-                # Continue from existing statistics
-                last_existing_ts, last_existing_state, last_existing_sum = last_existing
+                last_existing_ts = last_existing[0]
                 _LOGGER.debug(
-                    "Continuing from last statistic: ts=%s, state=%.4f, sum=%.4f",
+                    "Last existing statistic for %s: ts=%s",
+                    self.contract,
                     last_existing_ts,
-                    last_existing_state,
-                    last_existing_sum,
                 )
             else:
-                # No existing statistics - use first reading as baseline
-                last_existing_state = items[0][1]
-                last_existing_sum = 0.0
                 _LOGGER.debug(
-                    "No existing statistics, using baseline: %.4f",
-                    last_existing_state,
+                    "No existing statistics found for %s in last 30 days",
+                    self.contract,
                 )
 
             # Track the most recent data point for fill_to_now (before filtering)
             most_recent_ts, most_recent_state = items[-1]
 
+            # Calculate cutoff time: don't import statistics for the last 2 hours
+            # This prevents conflicts with HA's recorder which compiles stats hourly
+            now_utc = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
+            cutoff_ts = now_utc - timedelta(hours=2)
+
             # Build stats list, filtering out duplicates and data older than last statistic
             stats = []
+            skipped_existing = 0
+            skipped_old = 0
+            skipped_recent = 0
             for start_ts, state in items:
                 # Skip if this timestamp already has a statistic
                 if start_ts in existing_timestamps:
+                    skipped_existing += 1
                     continue
                 # Skip if this data is older than or equal to the last existing statistic
-                # This prevents negative sums from re-importing old data
+                # This prevents re-importing old data
                 if last_existing_ts is not None and start_ts <= last_existing_ts:
+                    skipped_old += 1
                     continue
-                # Calculate sum relative to the last existing statistic
-                # new_sum = last_existing_sum + (new_state - last_existing_state)
-                new_sum = last_existing_sum + (state - last_existing_state)
+                # Skip data from the last 2 hours to avoid conflicts with HA recorder
+                if start_ts > cutoff_ts:
+                    skipped_recent += 1
+                    continue
+                # Calculate sum using the baseline (consistent with historical import)
+                # sum = current_state - baseline_state
+                new_sum = state - baseline_state
                 stats.append(
                     {
                         "start": start_ts,
@@ -575,18 +695,28 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     }
                 )
 
-            # Fill gaps up to current time (minus 1 hour to avoid conflicts with HA)
+            _LOGGER.debug(
+                "Stats build for %s: %d to import, %d skipped (existing), "
+                "%d skipped (old), %d skipped (recent <2h), baseline=%.4f",
+                self.contract,
+                len(stats),
+                skipped_existing,
+                skipped_old,
+                skipped_recent,
+                baseline_state,
+            )
+
+            # Note: fill_to_now is disabled to avoid conflicts with HA recorder
+            # We only import historical data (older than 2 hours)
             if fill_to_now:
-                now_utc = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
-                max_fill_ts = now_utc - timedelta(hours=1)
+                # Fill gaps but only up to cutoff time (2 hours ago)
+                max_fill_ts = cutoff_ts
                 fill_ts = most_recent_ts + timedelta(hours=1)
 
                 while fill_ts <= max_fill_ts:
                     if fill_ts not in existing_timestamps:
-                        # Calculate sum for fill values using same formula
-                        fill_sum = last_existing_sum + (
-                            most_recent_state - last_existing_state
-                        )
+                        # Calculate sum for fill values using baseline
+                        fill_sum = most_recent_state - baseline_state
                         stats.append(
                             {
                                 "start": fill_ts,
@@ -597,12 +727,29 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     fill_ts += timedelta(hours=1)
 
             if stats:
+                # Log details about what we're importing
+                if len(stats) > 0:
+                    _LOGGER.info(
+                        "Importing %d points for %s: first=%s (state=%.4f, sum=%.4f), "
+                        "last=%s (state=%.4f, sum=%.4f)",
+                        len(stats),
+                        self.contract,
+                        stats[0]["start"],
+                        stats[0]["state"],
+                        stats[0]["sum"],
+                        stats[-1]["start"],
+                        stats[-1]["state"],
+                        stats[-1]["sum"],
+                    )
                 async_import_statistics(
                     self.hass, self._get_statistics_metadata(), stats
                 )
-                _LOGGER.info("Imported %d points for %s", len(stats), self.contract)
             else:
-                _LOGGER.debug("No new statistics to import for %s", self.contract)
+                _LOGGER.warning(
+                    "No new statistics to import for %s - all %d items were filtered",
+                    self.contract,
+                    len(items) if items else 0,
+                )
         finally:
             self._import_in_progress = False
 
@@ -655,6 +802,8 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     # Initialize baseline from the very first data point
                     if baseline_state is None:
                         baseline_state = items[0][1]
+                        # Store the baseline so regular updates use the same value
+                        self._baseline_state = baseline_state
                         _LOGGER.info(
                             "Historical import baseline for %s: %.4f (from %s)",
                             self.contract,
@@ -707,7 +856,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         consumptions,
         existing_timestamps: Set[datetime],
         fill_to_now: bool = False,
-        last_existing: Optional[Tuple[datetime, float, float]] = None,
+        baseline_state: Optional[float] = None,
     ) -> None:
         """Import statistics using pre-fetched existing timestamps.
 
@@ -718,9 +867,9 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             consumptions: Raw consumption data to import.
             existing_timestamps: Pre-fetched set of existing statistic timestamps.
             fill_to_now: Whether to fill gaps up to current time.
-            last_existing: Optional tuple of (timestamp, last_state, last_sum) from
-                          the most recent existing statistic. If not provided,
-                          will be queried from the database.
+            baseline_state: The baseline state value (first reading ever) used
+                           for sum calculations. If not provided, will use
+                           the first reading from the data.
         """
         if self._import_in_progress:
             _LOGGER.debug("Import already in progress — skipping")
@@ -732,24 +881,15 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             if not items:
                 return
 
-            # Query the last existing statistic if not provided
-            if last_existing is None:
-                last_existing = await self._get_last_existing_statistic(
-                    lookback_days=30
-                )
+            # Use provided baseline or fall back to first reading
+            if baseline_state is None:
+                baseline_state = items[0][1]
 
-            # Variables for baseline calculation
+            # Query the last existing statistic to know which timestamps to skip
+            last_existing = await self._get_last_existing_statistic(lookback_days=30)
             last_existing_ts: Optional[datetime] = None
-            last_existing_state: float
-            last_existing_sum: float
-
             if last_existing:
-                # Continue from existing statistics
-                last_existing_ts, last_existing_state, last_existing_sum = last_existing
-            else:
-                # No existing statistics - use first reading as baseline
-                last_existing_state = items[0][1]
-                last_existing_sum = 0.0
+                last_existing_ts = last_existing[0]
 
             # Build stats list, filtering out duplicates and old data
             stats = []
@@ -759,8 +899,8 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 # Skip data older than or equal to the last existing statistic
                 if last_existing_ts is not None and start_ts <= last_existing_ts:
                     continue
-                # Calculate sum relative to the last existing statistic
-                new_sum = last_existing_sum + (state - last_existing_state)
+                # Calculate sum using the baseline (consistent approach)
+                new_sum = state - baseline_state
                 stats.append(
                     {
                         "start": start_ts,

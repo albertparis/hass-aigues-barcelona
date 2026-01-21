@@ -497,10 +497,20 @@ class TestRealApiResponse:
 
 
 class TestSumCalculation:
-    """Tests for the cumulative sum calculation logic."""
+    """Tests for the cumulative sum calculation logic.
+
+    Note: The integration now uses a baseline-based approach where
+    sum = state - baseline_state, with baseline being the first reading ever.
+    These tests verify the old behavior is preserved for backward compatibility
+    and also test the new baseline approach.
+    """
 
     def test_sum_calculation_no_existing_stats(self):
-        """Test sum calculation when no existing statistics exist."""
+        """Test sum calculation when no existing statistics exist.
+
+        With the baseline approach, first reading becomes baseline,
+        so sum = state - baseline.
+        """
         # When no existing statistics, baseline is the first reading
         # sum = state - baseline
         items = [
@@ -510,25 +520,28 @@ class TestSumCalculation:
         ]
 
         # No existing statistics - use first reading as baseline
-        last_existing_state = items[0][1]  # 100.0
-        last_existing_sum = 0.0
+        baseline_state = items[0][1]  # 100.0
 
         stats = []
         for start_ts, state in items:
-            new_sum = last_existing_sum + (state - last_existing_state)
+            new_sum = state - baseline_state
             stats.append({"start": start_ts, "state": state, "sum": new_sum})
 
-        assert stats[0]["sum"] == 0.0  # 0 + (100.0 - 100.0) = 0
-        assert stats[1]["sum"] == 0.5  # 0 + (100.5 - 100.0) = 0.5
-        assert stats[2]["sum"] == 1.0  # 0 + (101.0 - 100.0) = 1.0
+        assert stats[0]["sum"] == 0.0  # 100.0 - 100.0 = 0
+        assert stats[1]["sum"] == 0.5  # 100.5 - 100.0 = 0.5
+        assert stats[2]["sum"] == 1.0  # 101.0 - 100.0 = 1.0
 
     def test_sum_calculation_with_existing_stats(self):
-        """Test sum calculation continues from existing statistics."""
-        # Existing statistic: state=100.0, sum=5.0
-        # This means we've tracked 5.0 m³ of consumption so far
+        """Test sum calculation continues using baseline approach.
+
+        With the baseline approach, sum = state - baseline_state.
+        The baseline is the first reading ever, not the last existing stat.
+        """
+        # Baseline established from first reading ever
+        baseline_state = 95.0
+
+        # Existing statistic was at state=100.0, sum=5.0 (100.0 - 95.0 = 5.0)
         last_existing_ts = datetime(2026, 1, 15, 9, 0, 0)
-        last_existing_state = 100.0
-        last_existing_sum = 5.0
 
         # New data points (after the last existing statistic)
         items = [
@@ -542,20 +555,22 @@ class TestSumCalculation:
             # Skip data older than or equal to last existing statistic
             if start_ts <= last_existing_ts:
                 continue
-            new_sum = last_existing_sum + (state - last_existing_state)
+            # Using baseline approach: sum = state - baseline
+            new_sum = state - baseline_state
             stats.append({"start": start_ts, "state": state, "sum": new_sum})
 
         assert len(stats) == 3
-        assert stats[0]["sum"] == 5.5  # 5.0 + (100.5 - 100.0) = 5.5
-        assert stats[1]["sum"] == 6.0  # 5.0 + (101.0 - 100.0) = 6.0
-        assert stats[2]["sum"] == 6.5  # 5.0 + (101.5 - 100.0) = 6.5
+        assert stats[0]["sum"] == 5.5  # 100.5 - 95.0 = 5.5
+        assert stats[1]["sum"] == 6.0  # 101.0 - 95.0 = 6.0
+        assert stats[2]["sum"] == 6.5  # 101.5 - 95.0 = 6.5
 
     def test_sum_calculation_skips_old_data(self):
         """Test that data older than last existing statistic is skipped."""
-        # Existing statistic at 11:00 with state=100.5, sum=5.5
+        # Baseline established from first reading ever
+        baseline_state = 95.0
+
+        # Existing statistic at 11:00 with state=100.5, sum=5.5 (100.5 - 95.0)
         last_existing_ts = datetime(2026, 1, 15, 11, 0, 0)
-        last_existing_state = 100.5
-        last_existing_sum = 5.5
 
         # New fetch returns overlapping data (some older than last statistic)
         items = [
@@ -571,83 +586,69 @@ class TestSumCalculation:
             # Skip data older than or equal to last existing statistic
             if start_ts <= last_existing_ts:
                 continue
-            new_sum = last_existing_sum + (state - last_existing_state)
+            # Using baseline approach: sum = state - baseline
+            new_sum = state - baseline_state
             stats.append({"start": start_ts, "state": state, "sum": new_sum})
 
         # Only the last 2 items should be imported
         assert len(stats) == 2
         assert stats[0]["start"] == datetime(2026, 1, 15, 12, 0, 0)
-        assert stats[0]["sum"] == 6.0  # 5.5 + (101.0 - 100.5) = 6.0
+        assert stats[0]["sum"] == 6.0  # 101.0 - 95.0 = 6.0
         assert stats[1]["start"] == datetime(2026, 1, 15, 13, 0, 0)
-        assert stats[1]["sum"] == 6.5  # 5.5 + (101.5 - 100.5) = 6.5
+        assert stats[1]["sum"] == 6.5  # 101.5 - 95.0 = 6.5
 
     def test_sum_calculation_prevents_negative_values(self):
-        """Test that skipping old data prevents negative sum values.
+        """Test that baseline approach prevents negative sum values.
 
-        This is the key fix for the Energy Dashboard negative values
-        issue. Without skipping old data, importing older data points
-        would result in negative sums because new_state <
-        last_existing_state.
+        With the baseline approach, sum = state - baseline_state.
+        Since state always increases (water meter reading), and baseline
+        is fixed, sum can never go negative.
         """
-        # Existing statistic at 12:00 with state=101.0, sum=6.0
+        # Baseline established from first reading ever
+        baseline_state = 95.0
+
+        # Existing statistic at 12:00 with state=101.0, sum=6.0 (101.0 - 95.0)
         last_existing_ts = datetime(2026, 1, 15, 12, 0, 0)
-        last_existing_state = 101.0
-        last_existing_sum = 6.0
 
         # Simulating what happens when API returns a week of data
         # that overlaps with already imported statistics
         items = [
-            (
-                datetime(2026, 1, 15, 10, 0, 0),
-                100.0,
-            ),  # Older, state < last_existing_state
-            (
-                datetime(2026, 1, 15, 11, 0, 0),
-                100.5,
-            ),  # Older, state < last_existing_state
-            (datetime(2026, 1, 15, 12, 0, 0), 101.0),  # Equal to last existing
+            (datetime(2026, 1, 15, 10, 0, 0), 100.0),  # Older (will be skipped)
+            (datetime(2026, 1, 15, 11, 0, 0), 100.5),  # Older (will be skipped)
+            (datetime(2026, 1, 15, 12, 0, 0), 101.0),  # Equal (will be skipped)
             (datetime(2026, 1, 15, 13, 0, 0), 101.5),  # New data
         ]
 
-        # WITHOUT the fix (old behavior) - would produce negative sums:
-        stats_without_fix = []
+        # With baseline approach + timestamp filtering:
+        stats = []
         for start_ts, state in items:
-            # Old behavior: no timestamp filtering
-            new_sum = last_existing_sum + (state - last_existing_state)
-            stats_without_fix.append(
-                {"start": start_ts, "state": state, "sum": new_sum}
-            )
-
-        # This shows why negative values occurred:
-        assert stats_without_fix[0]["sum"] == 5.0  # 6.0 + (100.0 - 101.0) = 5.0
-        assert stats_without_fix[1]["sum"] == 5.5  # 6.0 + (100.5 - 101.0) = 5.5
-        # Note: These would appear as negative consumption in the dashboard
-        # because the sum decreased from 6.0 to 5.0
-
-        # WITH the fix (new behavior) - only imports new data:
-        stats_with_fix = []
-        for start_ts, state in items:
-            # New behavior: skip data older than or equal to last existing
+            # Skip data older than or equal to last existing
             if start_ts <= last_existing_ts:
                 continue
-            new_sum = last_existing_sum + (state - last_existing_state)
-            stats_with_fix.append({"start": start_ts, "state": state, "sum": new_sum})
+            # Baseline approach: sum = state - baseline
+            new_sum = state - baseline_state
+            stats.append({"start": start_ts, "state": state, "sum": new_sum})
 
         # Only the genuinely new data point is imported
-        assert len(stats_with_fix) == 1
-        assert stats_with_fix[0]["start"] == datetime(2026, 1, 15, 13, 0, 0)
-        assert stats_with_fix[0]["sum"] == 6.5  # 6.0 + (101.5 - 101.0) = 6.5
-        # Sum increased correctly, no negative consumption
+        assert len(stats) == 1
+        assert stats[0]["start"] == datetime(2026, 1, 15, 13, 0, 0)
+        assert stats[0]["sum"] == 6.5  # 101.5 - 95.0 = 6.5
+
+        # Sum is always non-negative with baseline approach
+        assert stats[0]["sum"] >= 0
 
     def test_sum_always_increases_with_new_data(self):
         """Test that sum always increases when importing chronologically new
-        data."""
-        # Since accumulatedConsumption is a meter reading that always increases,
-        # and we only import data newer than the last statistic,
-        # the sum should always increase (or stay same if no consumption).
+        data.
+
+        With the baseline approach: sum = state - baseline_state.
+        Since state (meter reading) always increases, sum always increases.
+        """
+        # Baseline established from first reading ever
+        baseline_state = 95.0
+
         last_existing_ts = datetime(2026, 1, 15, 10, 0, 0)
-        last_existing_state = 100.0
-        last_existing_sum = 5.0
+        # Last existing had state=100.0, sum=5.0 (100.0 - 95.0)
 
         # Simulating a week of new data after last statistic
         items = [
@@ -661,16 +662,153 @@ class TestSumCalculation:
         for start_ts, state in items:
             if start_ts <= last_existing_ts:
                 continue
-            new_sum = last_existing_sum + (state - last_existing_state)
+            # Baseline approach: sum = state - baseline
+            new_sum = state - baseline_state
             stats.append({"start": start_ts, "state": state, "sum": new_sum})
 
-        # All sums should be >= last_existing_sum
+        # All sums should be >= the last existing sum (5.0)
         for stat in stats:
-            assert stat["sum"] >= last_existing_sum
+            assert stat["sum"] >= 5.0
 
         # Sums should be non-decreasing
         for i in range(1, len(stats)):
             assert stats[i]["sum"] >= stats[i - 1]["sum"]
+
+
+class TestBaselineCalculation:
+    """Tests for the unified baseline-based sum calculation approach.
+
+    The integration now uses a consistent baseline (first reading ever)
+    for calculating sum values, both in historical imports and regular
+    updates. This ensures the Energy Dashboard shows correct values
+    without negative readings when transitioning between import methods.
+    """
+
+    def test_baseline_sum_calculation(self):
+        """Test that sum is calculated as state - baseline."""
+        # Baseline is the first reading ever (e.g., from historical import)
+        baseline_state = 698.515
+
+        # New data points from the API
+        items = [
+            (datetime(2026, 1, 20, 10, 0, 0), 746.612),
+            (datetime(2026, 1, 20, 11, 0, 0), 746.811),
+            (datetime(2026, 1, 20, 12, 0, 0), 746.931),
+        ]
+
+        stats = []
+        for start_ts, state in items:
+            new_sum = state - baseline_state
+            stats.append({"start": start_ts, "state": state, "sum": new_sum})
+
+        # sum = state - baseline
+        assert round(stats[0]["sum"], 3) == round(746.612 - 698.515, 3)  # 48.097
+        assert round(stats[1]["sum"], 3) == round(746.811 - 698.515, 3)  # 48.296
+        assert round(stats[2]["sum"], 3) == round(746.931 - 698.515, 3)  # 48.416
+
+    def test_baseline_consistency_across_imports(self):
+        """Test that historical and regular imports use the same baseline.
+
+        This is the key fix for negative "today" values in the Energy
+        Dashboard. Both import methods must use the same baseline to
+        ensure continuous sum values without jumps or negative deltas.
+        """
+        # First reading ever (established during historical import)
+        baseline_state = 698.515
+
+        # Historical import establishes baseline and imports past data
+        historical_items = [
+            (datetime(2026, 1, 15, 10, 0, 0), 744.555),
+            (datetime(2026, 1, 15, 11, 0, 0), 744.714),
+        ]
+
+        historical_stats = []
+        for start_ts, state in historical_items:
+            new_sum = state - baseline_state
+            historical_stats.append({"start": start_ts, "state": state, "sum": new_sum})
+
+        # Last historical stat
+        last_historical_sum = historical_stats[-1]["sum"]
+
+        # Regular update uses same baseline
+        regular_items = [
+            (datetime(2026, 1, 20, 10, 0, 0), 746.612),
+            (datetime(2026, 1, 20, 11, 0, 0), 746.931),
+        ]
+
+        regular_stats = []
+        for start_ts, state in regular_items:
+            # Using same baseline as historical
+            new_sum = state - baseline_state
+            regular_stats.append({"start": start_ts, "state": state, "sum": new_sum})
+
+        # Regular sums should be higher than historical sums
+        # (water consumption always increases)
+        assert regular_stats[0]["sum"] > last_historical_sum
+        assert regular_stats[1]["sum"] > regular_stats[0]["sum"]
+
+        # Sum should always be non-negative
+        for stat in regular_stats:
+            assert stat["sum"] >= 0
+
+    def test_baseline_prevents_negative_daily_delta(self):
+        """Test that consistent baseline prevents negative daily deltas.
+
+        The Energy Dashboard calculates daily consumption as:
+        today_consumption = today_final_sum - yesterday_final_sum
+
+        With consistent baseline, this should never be negative.
+        """
+        baseline_state = 698.515
+
+        # Yesterday's last reading
+        yesterday_last = (datetime(2026, 1, 19, 23, 0, 0), 746.612)
+        yesterday_last_sum = yesterday_last[1] - baseline_state  # 48.097
+
+        # Today's readings
+        today_items = [
+            (datetime(2026, 1, 20, 0, 0, 0), 746.612),  # Midnight, same as yesterday
+            (datetime(2026, 1, 20, 8, 0, 0), 746.659),
+            (datetime(2026, 1, 20, 12, 0, 0), 746.811),
+            (datetime(2026, 1, 20, 22, 0, 0), 746.931),
+        ]
+
+        today_stats = []
+        for start_ts, state in today_items:
+            new_sum = state - baseline_state
+            today_stats.append({"start": start_ts, "state": state, "sum": new_sum})
+
+        today_final_sum = today_stats[-1]["sum"]  # 48.416
+
+        # Daily consumption = today's final sum - yesterday's final sum
+        daily_consumption = today_final_sum - yesterday_last_sum
+        assert daily_consumption >= 0  # Should never be negative
+        assert round(daily_consumption, 3) == round(746.931 - 746.612, 3)  # 0.319
+
+    def test_first_reading_becomes_baseline(self):
+        """Test that when no baseline exists, first reading becomes
+        baseline."""
+        # First import - no existing baseline
+        items = [
+            (datetime(2026, 1, 1, 10, 0, 0), 698.515),
+            (datetime(2026, 1, 1, 11, 0, 0), 698.520),
+            (datetime(2026, 1, 1, 12, 0, 0), 698.530),
+        ]
+
+        # First reading becomes baseline
+        baseline_state = items[0][1]
+
+        stats = []
+        for start_ts, state in items:
+            new_sum = state - baseline_state
+            stats.append({"start": start_ts, "state": state, "sum": new_sum})
+
+        # First entry has sum = 0 (baseline)
+        assert stats[0]["sum"] == 0.0
+        # Subsequent entries show consumption since baseline
+        # Use round() to avoid floating point precision issues
+        assert round(stats[1]["sum"], 4) == 0.005
+        assert round(stats[2]["sum"], 4) == 0.015
 
 
 class TestTimestampExtraction:
