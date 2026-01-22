@@ -344,6 +344,106 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             await recorder.async_add_executor_job(_delete_stats, recorder, to_clear)
             _LOGGER.info(f"Cleared statistics for {self.contract}")
 
+    async def _clear_statistics_from_timestamp(self, from_timestamp: datetime) -> None:
+        """Clear statistics from a specific timestamp forward.
+
+        This is used to fix statistics that were incorrectly compiled by
+        HA's recorder with wrong sum values.
+        """
+        recorder = get_db_instance(self.hass)
+        all_ids = await recorder.async_add_executor_job(list_statistic_ids, self.hass)
+        to_clear = [
+            x["statistic_id"] for x in all_ids if x["statistic_id"] == self.statistic_id
+        ]
+
+        if not to_clear:
+            return
+
+        # Convert timestamp to Unix timestamp for database comparison
+        from_ts = from_timestamp.timestamp()
+
+        def _delete_stats_from_ts(recorder_instance, statistic_ids, cutoff_ts):
+            try:
+                from homeassistant.components.recorder.db_schema import (
+                    Statistics,
+                    StatisticsShortTerm,
+                )
+            except ImportError:
+                try:
+                    from homeassistant.components.recorder.models.db_schema import (
+                        Statistics,
+                        StatisticsShortTerm,
+                    )
+                except ImportError:
+                    _LOGGER.error(
+                        "Could not import database schema models for statistics deletion"
+                    )
+                    return
+
+            from sqlalchemy import delete
+
+            with recorder_instance.get_session() as session:
+                # Get metadata IDs for the statistic IDs
+                from homeassistant.components.recorder.db_schema import StatisticsMeta
+
+                try:
+                    meta_ids = (
+                        session.query(StatisticsMeta.id)
+                        .filter(StatisticsMeta.statistic_id.in_(statistic_ids))
+                        .all()
+                    )
+                except Exception:
+                    try:
+                        from homeassistant.components.recorder.models.db_schema import (
+                            StatisticsMeta,
+                        )
+
+                        meta_ids = (
+                            session.query(StatisticsMeta.id)
+                            .filter(StatisticsMeta.statistic_id.in_(statistic_ids))
+                            .all()
+                        )
+                    except Exception as e:
+                        _LOGGER.error("Failed to query metadata IDs: %s", e)
+                        return
+
+                meta_ids = [row[0] for row in meta_ids]
+
+                if not meta_ids:
+                    return
+
+                # Delete statistics from cutoff timestamp forward
+                deleted_long = (
+                    session.execute(
+                        delete(Statistics).where(
+                            Statistics.metadata_id.in_(meta_ids),
+                            Statistics.start >= cutoff_ts,
+                        )
+                    )
+                ).rowcount
+
+                deleted_short = (
+                    session.execute(
+                        delete(StatisticsShortTerm).where(
+                            StatisticsShortTerm.metadata_id.in_(meta_ids),
+                            StatisticsShortTerm.start >= cutoff_ts,
+                        )
+                    )
+                ).rowcount
+
+                session.commit()
+                return deleted_long + deleted_short
+
+        deleted_count = await recorder.async_add_executor_job(
+            _delete_stats_from_ts, recorder, to_clear, from_ts
+        )
+        _LOGGER.info(
+            "Cleared %d statistics entries for %s from %s forward",
+            deleted_count or 0,
+            self.contract,
+            from_timestamp,
+        )
+
     async def get_last_measurement_stored(self) -> Optional[datetime]:
         """Placeholder — not used.
 
@@ -645,12 +745,42 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             last_existing = await self._get_last_existing_statistic(lookback_days=30)
             last_existing_ts: Optional[datetime] = None
             if last_existing:
-                last_existing_ts = last_existing[0]
-                _LOGGER.debug(
-                    "Last existing statistic for %s: ts=%s",
-                    self.contract,
-                    last_existing_ts,
-                )
+                last_existing_ts, last_existing_state, last_existing_sum = last_existing
+                # Check if the last existing statistic has a correct sum value
+                # HA's recorder might have compiled it with a wrong baseline
+                expected_sum = last_existing_state - baseline_state
+                sum_diff = abs(last_existing_sum - expected_sum)
+
+                # If the sum is way off (more than 1 m³ difference), it's likely from HA recorder
+                # with wrong baseline. We should delete it and reimport.
+                if sum_diff > 1.0:
+                    _LOGGER.warning(
+                        "Last existing statistic for %s has incorrect sum: "
+                        "expected=%.4f, actual=%.4f (diff=%.4f). "
+                        "This is likely from HA recorder with wrong baseline. "
+                        "Deleting statistics from %s forward to fix.",
+                        self.contract,
+                        expected_sum,
+                        last_existing_sum,
+                        sum_diff,
+                        last_existing_ts,
+                    )
+                    # Delete statistics from this timestamp forward
+                    await self._clear_statistics_from_timestamp(last_existing_ts)
+                    # Re-query existing timestamps since we just deleted some
+                    existing_timestamps = await self._get_existing_statistics(
+                        lookback_days=7
+                    )
+                    # Clear the last_existing_ts so we reimport this data
+                    last_existing_ts = None
+                else:
+                    _LOGGER.debug(
+                        "Last existing statistic for %s: ts=%s, sum=%.4f (expected=%.4f)",
+                        self.contract,
+                        last_existing_ts,
+                        last_existing_sum,
+                        expected_sum,
+                    )
             else:
                 _LOGGER.debug(
                     "No existing statistics found for %s in last 30 days",
