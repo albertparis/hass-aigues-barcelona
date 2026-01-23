@@ -684,10 +684,11 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
     def _get_statistics_metadata(self) -> Dict:
         """Return metadata for statistics import.
 
-        Using DOMAIN as source instead of "recorder" prevents Home Assistant's
-        recorder from auto-compiling statistics with its own baseline, which
-        can cause negative values in the Energy Dashboard. The integration
-        manages statistics with a consistent baseline (first reading ever).
+        Using DOMAIN as source instead of "recorder" prevents Home
+        Assistant's recorder from auto-compiling statistics with its own
+        baseline, which can cause negative values in the Energy
+        Dashboard. The integration manages statistics with a consistent
+        baseline (first reading ever).
         """
         metadata = {
             "has_sum": True,
