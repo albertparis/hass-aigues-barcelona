@@ -27,11 +27,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         except Exception as e:
             _LOGGER.error(f"Failed to clear statistics for {contract}: {e}")
 
-        # Re-import historical data with corrected sum values
+        # Re-import historical data after clearing statistics
+        # This ensures we have complete historical data without conflicts
         try:
             await fetch_historic_data(hass, coordinator)
         except Exception as e:
             _LOGGER.error(f"Failed to fetch historic data for {contract}: {e}")
+
+        # Trigger a normal update to get the latest data
+        try:
+            await coordinator.async_refresh()
+            _LOGGER.info(f"Current data refresh completed for {contract}")
+        except Exception as e:
+            _LOGGER.error(f"Failed to refresh current data for {contract}: {e}")
 
     hass.services.async_register(
         DOMAIN, "reset_and_refresh_data", handle_reset_and_refresh_data

@@ -183,7 +183,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         _LOGGER.info(f"Updating coordinator data for {self.contract}")
         TODAY = datetime.now()
         LAST_WEEK = TODAY - timedelta(days=7)
-        LAST_TIME_DAYS = None
+        # LAST_TIME_DAYS = None
 
         # last_measurement = await self.get_last_measurement_stored()
         # _LOGGER.info("Last stored measurement: %s", last_measurement)
@@ -193,7 +193,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             # FIX: TypeError: can't subtract offset-naive and offset-aware datetimes
             previous = previous.replace(tzinfo=None)
             if previous:
-                LAST_TIME_DAYS = (TODAY - previous).days
+                pass  # LAST_TIME_DAYS = (TODAY - previous).days
         except ValueError:
             previous = None
 
@@ -265,15 +265,16 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         self._data[CONF_STATE] = metric["datetime"]
 
         # await self._clear_statistics()
+        # Import statistics for new consumption data to ensure Energy Dashboard has data
+        # The recorder handles ongoing statistics automatically
         try:
-            # Use fill_to_now=True to fill statistics up to current hour
-            # This ensures HA recorder finds existing stats and doesn't add conflicting ones
             await self._async_import_statistics(consumptions, fill_to_now=True)
         except Exception:
             _LOGGER.exception("Failed to import statistics")
 
-        if LAST_TIME_DAYS and LAST_TIME_DAYS >= 7:
-            await self.import_old_consumptions(days=LAST_TIME_DAYS)
+        # Note: We no longer import historical consumptions to avoid conflicts with HA recorder
+        # if LAST_TIME_DAYS and LAST_TIME_DAYS >= 7:
+        #     await self.import_old_consumptions(days=LAST_TIME_DAYS)
 
         return True
 
@@ -598,14 +599,38 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     oldest_stat = min(stats_list, key=lambda s: s.get("start", 0))
                     oldest_state = oldest_stat.get("state")
 
-                    _LOGGER.info(
-                        "Baseline query for %s: found %d stats, oldest at %s "
-                        "with state=%.4f",
-                        self.contract,
-                        len(stats_list),
-                        oldest_stat.get("start"),
-                        oldest_state if oldest_state else 0,
-                    )
+                    # Validate the baseline looks reasonable
+                    if oldest_state is not None and oldest_state >= 0:
+                        # Check if the oldest stat is not too old (more than 2 years)
+                        oldest_ts = oldest_stat.get("start")
+                        if oldest_ts and isinstance(oldest_ts, (int, float)):
+                            oldest_datetime = dt_util.utc_from_timestamp(oldest_ts)
+                            days_old = (dt_util.utcnow() - oldest_datetime).days
+                            if days_old > 730:  # 2 years
+                                _LOGGER.warning(
+                                    "Baseline from %s is too old (%d days). "
+                                    "Will use current data as baseline.",
+                                    oldest_datetime,
+                                    days_old,
+                                )
+                                return None
+
+                        _LOGGER.info(
+                            "Baseline query for %s: found %d stats, oldest at %s "
+                            "with state=%.4f",
+                            self.contract,
+                            len(stats_list),
+                            oldest_stat.get("start"),
+                            oldest_state,
+                        )
+                        return oldest_state
+                    else:
+                        _LOGGER.warning(
+                            "Invalid baseline state %.4f for %s. Will recalculate.",
+                            oldest_state,
+                            self.contract,
+                        )
+                        return None
 
                     if oldest_state is not None:
                         return oldest_state
@@ -732,14 +757,23 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
             # If no baseline exists (first time setup), use first reading
             if baseline_state is None:
-                baseline_state = items[0][1]
-                self._baseline_state = baseline_state
-                _LOGGER.warning(
-                    "No baseline found, using first reading for %s: %.4f "
-                    "(this may cause negative values!)",
-                    self.contract,
-                    baseline_state,
-                )
+                first_state = items[0][1]
+                # Validate the first reading looks reasonable
+                if first_state >= 0:
+                    baseline_state = first_state
+                    self._baseline_state = baseline_state
+                    _LOGGER.warning(
+                        "No baseline found, using first reading for %s: %.4f",
+                        self.contract,
+                        baseline_state,
+                    )
+                else:
+                    _LOGGER.error(
+                        "Invalid first reading %.4f for %s. Skipping statistics import.",
+                        first_state,
+                        self.contract,
+                    )
+                    return
 
             # Query the last existing statistic to know which timestamps to skip
             last_existing = await self._get_last_existing_statistic(lookback_days=30)
@@ -807,6 +841,20 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 # Calculate sum using the baseline (consistent with historical import)
                 # sum = current_state - baseline_state
                 new_sum = state - baseline_state
+
+                # Prevent negative consumption sums (water usage can't be negative)
+                if new_sum < 0:
+                    _LOGGER.warning(
+                        "Calculated negative sum %.4f for %s at %s "
+                        "(state=%.4f, baseline=%.4f). Skipping this data point.",
+                        new_sum,
+                        self.contract,
+                        start_ts,
+                        state,
+                        baseline_state,
+                    )
+                    continue
+
                 stats.append(
                     {
                         "start": start_ts,
@@ -836,6 +884,18 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     if fill_ts not in existing_timestamps:
                         # Calculate sum for fill values using baseline
                         fill_sum = most_recent_state - baseline_state
+
+                        # Prevent negative consumption sums
+                        if fill_sum < 0:
+                            _LOGGER.warning(
+                                "Calculated negative fill sum %.4f for %s at %s. "
+                                "Skipping fill for this hour.",
+                                fill_sum,
+                                self.contract,
+                                fill_ts,
+                            )
+                            continue
+
                         stats.append(
                             {
                                 "start": fill_ts,
