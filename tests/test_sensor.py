@@ -145,7 +145,7 @@ class TestStatisticsMetadata:
         metadata = {
             "has_sum": True,
             "name": "Contador abc123",
-            "source": "recorder",
+            "source": "aigues_barcelona",  # Changed from "recorder" to prevent recorder auto-compilation
             "statistic_id": "sensor.contador_abc123",
             "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
         }
@@ -162,14 +162,14 @@ class TestStatisticsMetadata:
         metadata = {
             "has_sum": True,
             "name": f"Contador {contract_id}",
-            "source": "recorder",
+            "source": "aigues_barcelona",  # Changed from "recorder" to prevent recorder auto-compilation
             "statistic_id": f"sensor.contador_{contract_id}",
             "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
         }
 
         assert metadata["has_sum"] is True
         assert metadata["name"] == "Contador abc123"
-        assert metadata["source"] == "recorder"
+        assert metadata["source"] == "aigues_barcelona"
         assert metadata["statistic_id"] == "sensor.contador_abc123"
         assert metadata["unit_of_measurement"] == UnitOfVolume.CUBIC_METERS
 
