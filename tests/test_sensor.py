@@ -169,7 +169,7 @@ class TestStatisticsMetadata:
 
         assert metadata["has_sum"] is True
         assert metadata["name"] == "Contador abc123"
-        assert metadata["source"] == "aigues_barcelona"
+        assert metadata["source"] == "recorder"
         assert metadata["statistic_id"] == "sensor.contador_abc123"
         assert metadata["unit_of_measurement"] == UnitOfVolume.CUBIC_METERS
 
