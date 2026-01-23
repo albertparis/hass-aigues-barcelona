@@ -417,7 +417,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     session.execute(
                         delete(Statistics).where(
                             Statistics.metadata_id.in_(meta_ids),
-                            Statistics.start >= cutoff_ts,
+                            Statistics.start_ts >= cutoff_ts,
                         )
                     )
                 ).rowcount
@@ -426,7 +426,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     session.execute(
                         delete(StatisticsShortTerm).where(
                             StatisticsShortTerm.metadata_id.in_(meta_ids),
-                            StatisticsShortTerm.start >= cutoff_ts,
+                            StatisticsShortTerm.start_ts >= cutoff_ts,
                         )
                     )
                 ).rowcount
