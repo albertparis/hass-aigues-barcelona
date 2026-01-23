@@ -145,7 +145,7 @@ class TestStatisticsMetadata:
         metadata = {
             "has_sum": True,
             "name": "Contador abc123",
-            "source": "aigues_barcelona",  # Changed from "recorder" to prevent recorder auto-compilation
+            "source": "recorder",  # Required by Home Assistant
             "statistic_id": "sensor.contador_abc123",
             "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
         }
@@ -162,7 +162,7 @@ class TestStatisticsMetadata:
         metadata = {
             "has_sum": True,
             "name": f"Contador {contract_id}",
-            "source": "aigues_barcelona",  # Changed from "recorder" to prevent recorder auto-compilation
+            "source": "recorder",  # Required by Home Assistant
             "statistic_id": f"sensor.contador_{contract_id}",
             "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
         }

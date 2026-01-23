@@ -684,16 +684,15 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
     def _get_statistics_metadata(self) -> Dict:
         """Return metadata for statistics import.
 
-        Using DOMAIN as source instead of "recorder" prevents Home
-        Assistant's recorder from auto-compiling statistics with its own
-        baseline, which can cause negative values in the Energy
-        Dashboard. The integration manages statistics with a consistent
-        baseline (first reading ever).
+        Note: We use "recorder" as the source (required by Home Assistant).
+        To prevent negative values when the recorder auto-compiles statistics,
+        we ensure the baseline_state is consistent and always import statistics
+        with the correct sum calculation (state - baseline_state).
         """
         metadata = {
             "has_sum": True,
             "name": f"Contador {self.id}",
-            "source": DOMAIN,  # Use domain instead of "recorder" to prevent recorder auto-compilation
+            "source": "recorder",  # Required by Home Assistant - must be "recorder"
             "statistic_id": self.statistic_id,
             "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
             "unit_class": "volume",  # Required from HA 2026.11
@@ -792,9 +791,9 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 expected_sum = last_existing_state - baseline_state
                 sum_diff = abs(last_existing_sum - expected_sum)
 
-                # If the sum is way off (more than 1 m³ difference), it's likely from HA recorder
-                # with wrong baseline. We should delete it and reimport.
-                if sum_diff > 1.0:
+                # If the sum is way off (more than 0.1 m³ difference) or negative,
+                # it's likely from HA recorder with wrong baseline. We should delete it and reimport.
+                if sum_diff > 0.1 or last_existing_sum < 0:
                     _LOGGER.warning(
                         "Last existing statistic for %s has incorrect sum: "
                         "expected=%.4f, actual=%.4f (diff=%.4f). "
@@ -827,6 +826,44 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     "No existing statistics found for %s in last 30 days",
                     self.contract,
                 )
+
+            # Additional check: Look for any statistics with negative sums in the last 7 days
+            # This catches cases where the recorder compiled statistics incorrectly
+            if baseline_state is not None:
+                recent_stats = await get_db_instance(self.hass).async_add_executor_job(
+                    statistics_during_period,
+                    self.hass,
+                    dt_util.utcnow() - timedelta(days=7),
+                    None,
+                    {self.statistic_id},
+                    "hour",
+                    None,
+                    {"sum"},
+                )
+                if recent_stats and self.statistic_id in recent_stats:
+                    negative_found = False
+                    for stat in recent_stats[self.statistic_id]:
+                        stat_sum = stat.get("sum")
+                        if stat_sum is not None and stat_sum < 0:
+                            negative_found = True
+                            _LOGGER.warning(
+                                "Found negative sum (%.4f) in statistics for %s at %s. "
+                                "This indicates recorder compiled with wrong baseline. "
+                                "Will reimport recent statistics.",
+                                stat_sum,
+                                self.contract,
+                                stat.get("start"),
+                            )
+                            break
+                    if negative_found:
+                        # Delete statistics from 7 days ago forward to fix negative values
+                        fix_from_ts = dt_util.utcnow() - timedelta(days=7)
+                        await self._clear_statistics_from_timestamp(fix_from_ts)
+                        # Re-query existing timestamps
+                        existing_timestamps = await self._get_existing_statistics(
+                            lookback_days=7
+                        )
+                        last_existing_ts = None
 
             # Track the most recent data point for fill_to_now (before filtering)
             most_recent_ts, most_recent_state = items[-1]
