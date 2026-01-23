@@ -825,11 +825,11 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 baseline_state,
             )
 
-            # Fill gaps up to current hour so HA recorder finds existing stats
+            # Fill gaps up to previous hour to avoid conflicts with HA recorder
             if fill_to_now:
                 now_utc = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
-                # Fill up to current hour (inclusive)
-                max_fill_ts = now_utc
+                # Fill up to previous hour to avoid conflicts with HA's automatic hourly compilation
+                max_fill_ts = now_utc - timedelta(hours=1)
                 fill_ts = most_recent_ts + timedelta(hours=1)
 
                 while fill_ts <= max_fill_ts:
