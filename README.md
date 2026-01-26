@@ -36,6 +36,18 @@ La información se consulta **cada 8 horas** para no sobresaturar el servicio.
    - Tu contraseña
    - Tu API Key de 2Captcha
 
+## Actualización desde versiones anteriores
+
+**⚠️ Cambio disruptivo en la versión actual**
+
+Si actualizas desde una versión anterior, necesitarás realizar los siguientes pasos:
+
+1. **Remover el sensor del Panel de Energía**: Ve a Configuración → Energía → Tu panel de energía → Remueve la fuente de agua existente.
+2. **Limpiar estadísticas antiguas** (opcional): Ve a Configuración → Desarrollador → Estadísticas y elimina las estadísticas del sensor `sensor.contador_*`.
+3. **Agregar la nueva fuente**: Una vez actualizado, vuelve al Panel de Energía y agrega la nueva fuente de agua.
+
+Esto es necesario porque el ID de las estadísticas cambió de `sensor.contador_*` a `aigues_barcelona:*_consumption` para una mejor compatibilidad.
+
 ## Servicios
 
 ### `aigues_barcelona.reset_and_refresh_data`

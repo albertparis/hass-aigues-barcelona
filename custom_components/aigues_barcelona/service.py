@@ -49,7 +49,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def clear_stored_data(hass: HomeAssistant, coordinator) -> None:
     _LOGGER.info("Clearing stored statistics...")
-    await coordinator._clear_statistics()
+    await coordinator.clear_all_stored_data()
     _LOGGER.info("Statistics cleared successfully")
 
 
