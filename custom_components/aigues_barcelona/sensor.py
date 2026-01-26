@@ -678,6 +678,8 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             # Build statistics data following edata pattern
             new_stats = []
             last_stat_dt = self._last_stats_dt.get(self.statistic_id)
+            first_stat = None
+            last_stat = None
 
             for start_ts, increment in items:
                 # Skip data that's not newer than our last statistic
@@ -687,41 +689,36 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 # Update cumulative sum with this increment
                 cumulative_sum += increment
 
-                new_stats.append(
-                    StatisticData(
-                        start=start_ts,
-                        state=increment,  # Store the increment (non-negative)
-                        sum=round(
-                            cumulative_sum, 4
-                        ),  # Cumulative total (always increasing)
-                    )
+                stat_data = StatisticData(
+                    start=start_ts,
+                    state=increment,  # Store the increment (non-negative)
+                    sum=round(
+                        cumulative_sum, 4
+                    ),  # Cumulative total (always increasing)
                 )
+                new_stats.append(stat_data)
 
-            # Extract values BEFORE calling async_add_external_statistics
-            # as it immediately modifies the objects in new_stats in place
+                # Track first and last stats for logging (extract values immediately)
+                if first_stat is None:
+                    first_stat = (start_ts, increment, round(cumulative_sum, 4))
+                last_stat = (start_ts, increment, round(cumulative_sum, 4))
+
+            # Update tracking and log BEFORE calling async_add_external_statistics
             if new_stats:
-                # Extract values from StatisticData objects before async call modifies them
-                first_stat_start = new_stats[0].start
-                first_stat_state = new_stats[0].state
-                first_stat_sum = new_stats[0].sum
-                last_stat_start = new_stats[-1].start
-                last_stat_sum = new_stats[-1].sum
-                last_stat_state = new_stats[-1].state
-
-                self._last_stats_dt[self.statistic_id] = last_stat_start
-                self._last_stats_sum[self.statistic_id] = last_stat_sum
+                self._last_stats_dt[self.statistic_id] = last_stat[0]
+                self._last_stats_sum[self.statistic_id] = last_stat[2]
 
                 _LOGGER.info(
                     "Importing %d points for %s: first=%s (increment=%.4f, sum=%.4f), "
                     "last=%s (increment=%.4f, sum=%.4f)",
                     len(new_stats),
                     self.contract,
-                    first_stat_start,
-                    first_stat_state,
-                    first_stat_sum,
-                    last_stat_start,
-                    last_stat_state,
-                    last_stat_sum,
+                    first_stat[0],
+                    first_stat[1],
+                    first_stat[2],
+                    last_stat[0],
+                    last_stat[1],
+                    last_stat[2],
                 )
 
                 # Use async_add_external_statistics with proper metadata
