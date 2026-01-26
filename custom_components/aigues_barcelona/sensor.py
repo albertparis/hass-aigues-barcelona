@@ -697,10 +697,12 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     )
                 )
 
-            # Update our tracking dicts
+            # Update our tracking dicts BEFORE calling async_add_external_statistics
+            # as it may modify the new_stats list in place
             if new_stats:
-                self._last_stats_dt[self.statistic_id] = new_stats[-1].start
-                self._last_stats_sum[self.statistic_id] = new_stats[-1].sum
+                last_stat = new_stats[-1]
+                self._last_stats_dt[self.statistic_id] = last_stat.start
+                self._last_stats_sum[self.statistic_id] = last_stat.sum
 
                 _LOGGER.info(
                     "Importing %d points for %s: first=%s (increment=%.4f, sum=%.4f), "
@@ -710,9 +712,9 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     new_stats[0].start,
                     new_stats[0].state,
                     new_stats[0].sum,
-                    new_stats[-1].start,
-                    new_stats[-1].state,
-                    new_stats[-1].sum,
+                    last_stat.start,
+                    last_stat.state,
+                    last_stat.sum,
                 )
 
                 # Use async_add_external_statistics with proper metadata
