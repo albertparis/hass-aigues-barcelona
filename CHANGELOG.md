@@ -14,14 +14,17 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Renamed project to "Aigües de Barcelona (2Captcha)" to reflect 2Captcha integration
 - Repository ownership transferred to @albertparis
+- Updated scan interval from 4 hours to 8 hours to match documentation and reduce API load
 
 ### Fixed
 - Auto-relogin when server rejects JWT token with "Invalid JWT" error
 - Energy dashboard statistics calculation - fixed negative values issue
 - Statistics import now correctly calculates cumulative sum from baseline
+- Statistics import error when metadata doesn't exist during reset operations
 - KeyError for existing config entries upgrading from versions without 2Captcha
 - Separated token refresh errors from consumption request errors in logs
 - Duplicate statistics import prevention
+- Switched from absolute meter readings to incremental consumption values to prevent negative readings
 
 ## [0.5.0]
 
