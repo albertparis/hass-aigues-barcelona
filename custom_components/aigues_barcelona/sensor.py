@@ -9,7 +9,6 @@ import homeassistant.components.recorder.util as recorder_util
 
 from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
 from homeassistant.components.recorder.statistics import async_add_external_statistics
-from homeassistant.components.recorder.statistics import async_import_statistics
 from homeassistant.components.recorder.statistics import get_last_statistics
 from homeassistant.components.recorder.statistics import list_statistic_ids
 from homeassistant.components.recorder.statistics import statistics_during_period
@@ -805,18 +804,18 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                         cumulative_sum += increment
 
                         stats.append(
-                            {
-                                "start": start_ts,
-                                "state": increment,
-                                "sum": round(cumulative_sum, 4),
-                            }
+                            StatisticData(
+                                start=start_ts,
+                                state=increment,
+                                sum=round(cumulative_sum, 4),
+                            )
                         )
                         existing_timestamps.add(start_ts)
 
                     if stats:
-                        async_import_statistics(
-                            self.hass, self._get_statistics_metadata(), stats
-                        )
+                        # Use async_add_external_statistics to ensure metadata exists
+                        metadata = self._get_statistics_metadata()
+                        async_add_external_statistics(self.hass, metadata, stats)
                         _LOGGER.debug(
                             "Imported %d hourly points for %s (week of %s, cumulative_sum=%.4f)",
                             len(stats),
@@ -891,19 +890,19 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                 cumulative_sum += increment
 
                 stats.append(
-                    {
-                        "start": start_ts,
-                        "state": increment,
-                        "sum": round(cumulative_sum, 4),
-                    }
+                    StatisticData(
+                        start=start_ts,
+                        state=increment,
+                        sum=round(cumulative_sum, 4),
+                    )
                 )
                 # Add to existing set to prevent duplicates within this import session
                 existing_timestamps.add(start_ts)
 
             if stats:
-                async_import_statistics(
-                    self.hass, self._get_statistics_metadata(), stats
-                )
+                # Use async_add_external_statistics to ensure metadata exists
+                metadata = self._get_statistics_metadata()
+                async_add_external_statistics(self.hass, metadata, stats)
                 _LOGGER.debug(
                     "Imported %d historical points for %s", len(stats), self.contract
                 )
