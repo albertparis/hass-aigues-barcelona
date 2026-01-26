@@ -697,10 +697,10 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
                     )
                 )
 
-            # Update our tracking dicts BEFORE calling async_add_external_statistics
-            # as it may modify the new_stats list in place. Extract values before the call.
+            # Extract values BEFORE calling async_add_external_statistics
+            # as it immediately modifies the objects in new_stats in place
             if new_stats:
-                # Extract values from StatisticData objects before they potentially get modified
+                # Extract values from StatisticData objects before async call modifies them
                 first_stat_start = new_stats[0].start
                 first_stat_state = new_stats[0].state
                 first_stat_sum = new_stats[0].sum
