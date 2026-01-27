@@ -732,10 +732,27 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             self._import_in_progress = False
 
     async def clear_all_stored_data(self) -> None:
-        """Clear all stored statistics tracking data."""
+        """Clear all stored statistics from database and tracking data."""
         _LOGGER.warning(
-            "%s: clearing all stored statistics tracking data", self.contract
+            "%s: clearing all stored statistics from database", self.contract
         )
+
+        # Get all statistic IDs for this contract
+        all_ids = await get_db_instance(self.hass).async_add_executor_job(
+            list_statistic_ids, self.hass
+        )
+        to_clear = [
+            x["statistic_id"] for x in all_ids if x["statistic_id"] == self.statistic_id
+        ]
+
+        if to_clear:
+            # Delete statistics from database
+            await get_db_instance(self.hass).async_clear_statistics(to_clear)
+            _LOGGER.info(
+                "Deleted statistics from database for %s: %s", self.contract, to_clear
+            )
+
+        # Clear in-memory tracking
         self._last_stats_sum = {}
         self._last_stats_dt = {}
 
