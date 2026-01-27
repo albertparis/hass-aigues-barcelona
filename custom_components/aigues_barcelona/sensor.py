@@ -944,7 +944,20 @@ class ContadorAgua(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
-        return self.coordinator._data.get(CONF_VALUE, None)
+        # Primary: Use current value from coordinator data
+        value = self.coordinator._data.get(CONF_VALUE, None)
+        if value is not None:
+            return value
+
+        # Fallback: Use last known statistic value (similar to edata pattern)
+        last_stat = self.coordinator._last_stats_sum.get(
+            self.coordinator.statistic_id, None
+        )
+        if last_stat is not None:
+            return last_stat
+
+        # Default: Return 0.0 if no data available yet
+        return 0.0
 
     @property
     def last_measurement(self):
