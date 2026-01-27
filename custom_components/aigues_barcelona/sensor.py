@@ -625,8 +625,9 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
         the recorder auto-compiles statistics.
         """
         return StatisticMetaData(
-            has_mean=False,
+            has_mean=False,  # Keep for backward compatibility
             has_sum=True,
+            mean_type=StatisticMeanType.NONE if StatisticMeanType else 0,
             name=f"Contador {self.id}",
             source=DOMAIN,  # External statistics use domain as source
             statistic_id=self.statistic_id,
