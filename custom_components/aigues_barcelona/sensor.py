@@ -682,7 +682,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
 
             for start_ts, increment in items:
                 # Skip data that's not newer than our last statistic
-                if last_stat_dt and start_ts <= last_stat_dt:
+                if last_stat_dt and start_ts < last_stat_dt:
                     continue
 
                 # Update cumulative sum with this increment
