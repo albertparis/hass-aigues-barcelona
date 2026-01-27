@@ -18,6 +18,12 @@ try:
 except ImportError:
     # Fallback for older HA versions
     StatisticMeanType = None
+
+try:
+    from homeassistant.components.recorder.models.statistics import UNIT_CLASS_VOLUME
+except ImportError:
+    # Fallback for older HA versions
+    UNIT_CLASS_VOLUME = "volume"
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.components.sensor import SensorStateClass
@@ -631,6 +637,7 @@ class ContratoAgua(TimestampDataUpdateCoordinator):
             name=f"Contador {self.id}",
             source=DOMAIN,  # External statistics use domain as source
             statistic_id=self.statistic_id,
+            unit_class=UNIT_CLASS_VOLUME,
             unit_of_measurement=UnitOfVolume.CUBIC_METERS,
         )
 
