@@ -9,8 +9,8 @@ import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD
-from homeassistant.const import CONF_TOKEN
 from homeassistant.const import CONF_USERNAME
+from homeassistant.const import CONF_TOKEN
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
@@ -18,6 +18,7 @@ from .api import AiguesApiClient
 from .const import API_ERROR_TOKEN_REVOKED
 from .const import CONF_CONTRACT
 from .const import DOMAIN
+from .const import CONF_2CAPTCHA_APIKEY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,9 +26,9 @@ ACCOUNT_CONFIG_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USERNAME): cv.string,
         vol.Required(CONF_PASSWORD): cv.string,
+        vol.Required(CONF_2CAPTCHA_APIKEY): cv.string,
     }
 )
-TOKEN_SCHEMA = vol.Schema({vol.Required(CONF_TOKEN): cv.string})
 
 
 def check_valid_nif(username: str) -> bool:
@@ -56,25 +57,23 @@ async def validate_credentials(
 ) -> dict[str, Any]:
     username = data[CONF_USERNAME]
     password = data[CONF_PASSWORD]
-    token = data.get(CONF_TOKEN)
+    twocaptcha_api_key = data[CONF_2CAPTCHA_APIKEY]
 
     if not check_valid_nif(username):
         raise InvalidUsername
 
     try:
-        api = AiguesApiClient(username, password)
-        if token:
-            api.set_token(token)
-        else:
-            _LOGGER.info("Attempting to login")
-            login = await hass.async_add_executor_job(api.login)
-            if not login:
-                raise InvalidAuth
-            _LOGGER.info("Login succeeded!")
+        api = AiguesApiClient(username, password, twocaptcha_api_key)
+        _LOGGER.info("Attempting to login")
+        login = await hass.async_add_executor_job(api.login)
+        if not login:
+            raise InvalidAuth
+        _LOGGER.info("Login succeeded!")
         contracts = await hass.async_add_executor_job(api.contracts, username)
+        token = api.get_token()
 
         available_contracts = [x["contractDetail"]["contractNumber"] for x in contracts]
-        return {CONF_CONTRACT: available_contracts}
+        return {CONF_CONTRACT: available_contracts, CONF_TOKEN: token}
 
     except Exception:
         _LOGGER.debug(f"Last data: {api.last_response}")
@@ -128,14 +127,6 @@ class AiguesBarcelonaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Return to user step with stored input (previous user creds) and the
-        current provided token."""
-
-        if not user_input:
-            return self.async_show_form(
-                step_id="reauth_confirm", data_schema=TOKEN_SCHEMA
-            )
-
         errors = {}
         _LOGGER.debug(
             f"Current values on reauth_confirm: {self.entry} --> {user_input}"
@@ -152,7 +143,9 @@ class AiguesBarcelonaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.error("Reauth failed, contract does not match stored one")
                 raise InvalidAuth
 
-            self.hass.config_entries.async_update_entry(self.entry, data=user_input)
+            self.hass.config_entries.async_update_entry(
+                self.entry, data={**user_input, **info}
+            )
             self.hass.async_create_task(
                 self.hass.config_entries.async_reload(self.entry.entry_id)
             )
@@ -165,7 +158,9 @@ class AiguesBarcelonaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors["base"] = "invalid_auth"
 
         return self.async_show_form(
-            step_id="reauth_confirm", data_schema=TOKEN_SCHEMA, errors=errors
+            step_id="reauth_confirm",
+            data_schema=ACCOUNT_CONFIG_SCHEMA,
+            errors=errors,
         )
 
     async def async_step_user(
@@ -187,18 +182,14 @@ class AiguesBarcelonaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 raise InvalidAuth
             contracts = info[CONF_CONTRACT]
 
-            await self.async_set_unique_id(user_input["username"])
+            await self.async_set_unique_id(user_input[CONF_USERNAME])
             self._abort_if_unique_id_configured()
         except NotImplementedError:
             errors["base"] = "not_implemented"
         except TokenExpired:
             errors["base"] = "token_expired"
-            return self.async_show_form(
-                step_id="token", data_schema=TOKEN_SCHEMA, errors=errors
-            )
         except RecaptchaAppeared:
-            # Ask for OAuth Token to login.
-            return self.async_show_form(step_id="token", data_schema=TOKEN_SCHEMA)
+            errors["base"] = "token_requested"
         except InvalidUsername:
             errors["base"] = "invalid_auth"
         except InvalidAuth:
